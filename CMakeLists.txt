@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(scaled_fjt_controller)
+project(scaled_follow_joint_trajectory_controller_ros2)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -25,15 +25,15 @@ set(THIS_PACKAGE_INCLUDE_DEPENDS
 
 include_directories(include)
 
-add_library(scaled_fjt_controller SHARED
+add_library(${PROJECT_NAME} SHARED
   src/scaled_fjt_controller.cpp
   src/microinterpolator.cpp
 )
-target_include_directories(scaled_fjt_controller PRIVATE
+target_include_directories(${PROJECT_NAME} PRIVATE
   include
 )
 
-ament_target_dependencies(scaled_fjt_controller PUBLIC ${THIS_PACKAGE_INCLUDE_DEPENDS})
+ament_target_dependencies(${PROJECT_NAME} PUBLIC ${THIS_PACKAGE_INCLUDE_DEPENDS})
 
 pluginlib_export_plugin_description_file(controller_interface scaled_fjt_controller.xml)
 
@@ -43,9 +43,8 @@ install(
   DESTINATION include/scaled_fjt_controller
 )
 install(
-  TARGETS
-    scaled_fjt_controller
-  EXPORT export_scaled_fjt_controller
+  TARGETS ${PROJECT_NAME}
+  EXPORT export_${PROJECT_NAME}
   RUNTIME DESTINATION bin
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
