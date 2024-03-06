@@ -33,10 +33,12 @@ target_include_directories(${PROJECT_NAME} PRIVATE
   include
 )
 
-ament_target_dependencies(${PROJECT_NAME} PUBLIC ${THIS_PACKAGE_INCLUDE_DEPENDS})
-
 pluginlib_export_plugin_description_file(controller_interface scaled_fjt_controller.xml)
 
+
+ament_target_dependencies(${PROJECT_NAME} PUBLIC ${THIS_PACKAGE_INCLUDE_DEPENDS})
+
+ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 
 install(
   DIRECTORY include/
@@ -48,6 +50,20 @@ install(
   RUNTIME DESTINATION bin
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
+)
+
+ament_export_include_directories(
+        include
+)
+
+ament_export_libraries(
+        ${PROJECT_NAME}
+)
+
+ament_export_dependencies(
+        hardware_interface
+        pluginlib
+        rclcpp
 )
 
 ament_package()
