@@ -50,6 +50,7 @@ bool ScaledFjtController::sort_trajectory(const std::vector<std::string>& joint_
   sorted_trj.joint_names=joint_names;
   sorted_trj.header=trj.header;
 
+  sorted_trj.points.clear();
   for (const trajectory_msgs::msg::JointTrajectoryPoint& pnt: trj.points)
   {
     sorted_trj.points.push_back(pnt);
@@ -188,8 +189,8 @@ rclcpp_action::CancelResponse ScaledFjtController::goal_cancelled_callback(
 
 void ScaledFjtController::goal_accepted_callback(std::shared_ptr<rclcpp_action::ServerGoalHandle<FollowJTrajAction>> goal_handle)
 {
-  goal_handle_ = goal_handle;
   JointTrajectoryController::goal_accepted_callback(goal_handle);
+  goal_handle_ = goal_handle;
 
   if (!this->sort_trajectory(joint_names_, goal_handle->get_goal()->trajectory, trj_))
   {
