@@ -96,20 +96,32 @@ controller_interface::CallbackReturn ScaledFjtController::on_activate(const rclc
   else
     speed_ovr_topic = get_node()->get_parameter("speed_ovr_topic").as_string();
 
+  int spline_order ;
+  if (!get_node()->has_parameter("splide_order"))
+    spline_order = 1;
+  else
+    spline_order = get_node()->get_parameter("splide_order").as_int();
+
+  if(spline_order<1)
+  {
+    RCLCPP_ERROR(this->get_node()->get_logger(),"Spline order cannot be less than 1, set equal to 1");
+    spline_order = 1;
+  }
+
   speed_ovr_sub_ = get_node()->create_subscription<std_msgs::msg::Int16>(
-                     speed_ovr_topic,
-                     10,
-                     std::bind(&ScaledFjtController::SpeedOvrCb,
-                               this,
-                               std::placeholders::_1));
+        speed_ovr_topic,
+        10,
+        std::bind(&ScaledFjtController::SpeedOvrCb,
+                  this,
+                  std::placeholders::_1));
 
   action_server_ = rclcpp_action::create_server<FollowJTrajAction>(
-                     get_node()->get_node_base_interface(), get_node()->get_node_clock_interface(),
-                     get_node()->get_node_logging_interface(), get_node()->get_node_waitables_interface(),
-                     std::string(get_node()->get_name()) + "/follow_joint_trajectory",
-                     std::bind(&ScaledFjtController::goal_received_callback, this, std::placeholders::_1, std::placeholders::_2),
-                     std::bind(&ScaledFjtController::goal_cancelled_callback, this, std::placeholders::_1),
-                     std::bind(&ScaledFjtController::goal_accepted_callback, this, std::placeholders::_1));
+        get_node()->get_node_base_interface(), get_node()->get_node_clock_interface(),
+        get_node()->get_node_logging_interface(), get_node()->get_node_waitables_interface(),
+        std::string(get_node()->get_name()) + "/follow_joint_trajectory",
+        std::bind(&ScaledFjtController::goal_received_callback, this, std::placeholders::_1, std::placeholders::_2),
+        std::bind(&ScaledFjtController::goal_cancelled_callback, this, std::placeholders::_1),
+        std::bind(&ScaledFjtController::goal_accepted_callback, this, std::placeholders::_1));
 
 
   current_point_.time_from_start = rclcpp::Duration::from_seconds(0.0);
@@ -143,7 +155,6 @@ controller_interface::CallbackReturn ScaledFjtController::on_activate(const rclc
   microinterpolator_.reset(new Microinterpolator());
   microinterpolator_->setTrajectory(trj_);
 
-  int spline_order=1;   // TODO :: from params
   microinterpolator_->setSplineOrder(spline_order);
 
   return ret;
@@ -159,16 +170,24 @@ controller_interface::return_type ScaledFjtController::update(const rclcpp::Time
     RCLCPP_ERROR_STREAM(get_node()->get_logger(),"current point   = "  << trajectory_msgs::msg::to_yaml(current_point_));
   }
 
-  td_.scaled_time = rclcpp::Duration::from_seconds(td_.scaled_time.seconds() + period.seconds() * speed_ovr_);
-  td_.time        = rclcpp::Duration::from_seconds(td_.time.seconds() + period.seconds());
-  
   RCLCPP_DEBUG_STREAM(get_node()->get_logger(),"current point   = "  << trajectory_msgs::msg::to_yaml(current_point_));
   RCLCPP_DEBUG_STREAM(get_node()->get_logger(),"td_.scaled_time   = "  << td_.scaled_time.seconds());
   RCLCPP_DEBUG_STREAM(get_node()->get_logger(),"td_.time   = "  << td_.time.seconds());
   RCLCPP_DEBUG_STREAM(get_node()->get_logger(),"speed ovr  = "  << speed_ovr_);
 
+  if(goal_handle_ && goal_handle_->is_executing() && (td_.scaled_time-trj_.points.back().time_from_start).seconds()>=0)
+  {
+    auto result = std::make_shared<FollowJTrajAction::Result>();
+    result->error_code = result->SUCCESSFUL;
+    goal_handle_->succeed(result);
+    goal_handle_ = nullptr;
+  }
+
   for (size_t i=0; i<current_point_.positions.size();i++)
     this->joint_command_interface_[0][i].get().set_value(current_point_.positions[i]);
+
+  td_.scaled_time = rclcpp::Duration::from_seconds(td_.scaled_time.seconds() + period.seconds() * speed_ovr_);
+  td_.time        = rclcpp::Duration::from_seconds(td_.time.seconds() + period.seconds());
 
   return controller_interface::return_type::OK;
 }
@@ -190,14 +209,13 @@ rclcpp_action::CancelResponse ScaledFjtController::goal_cancelled_callback(
 void ScaledFjtController::goal_accepted_callback(std::shared_ptr<rclcpp_action::ServerGoalHandle<FollowJTrajAction>> goal_handle)
 {
   JointTrajectoryController::goal_accepted_callback(goal_handle);
-  goal_handle_ = goal_handle;
 
   if (!this->sort_trajectory(joint_names_, goal_handle->get_goal()->trajectory, trj_))
   {
     RCLCPP_ERROR(get_node()->get_logger(), "Names are different");
     auto result = std::make_shared<FollowJTrajAction::Result>();
     result->error_code = result->INVALID_JOINTS;
-    goal_handle_->abort(result);
+    goal_handle->abort(result);
 
     return;
   }
@@ -205,6 +223,8 @@ void ScaledFjtController::goal_accepted_callback(std::shared_ptr<rclcpp_action::
   microinterpolator_->setTrajectory(trj_);
   td_.scaled_time = rclcpp::Duration::from_seconds(0.0);
   td_.time        = rclcpp::Duration::from_seconds(0.0);
+
+  goal_handle_ = goal_handle; //in the last line, otherwise goal_handle_->succeed() may happen in update()
 }
 
 void ScaledFjtController::SpeedOvrCb(const std_msgs::msg::Int16 ovr)
