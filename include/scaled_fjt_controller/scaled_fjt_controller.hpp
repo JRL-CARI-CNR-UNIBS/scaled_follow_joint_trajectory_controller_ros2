@@ -41,12 +41,12 @@ protected:
   };
 
   ScaledFjtController::TimeData td_;
+  std::shared_ptr<rclcpp_action::ServerGoalHandle<FollowJTrajAction>> goal_handle_;
 
   bool sort_trajectory(const std::vector<std::string>& joint_names, const trajectory_msgs::msg::JointTrajectory& trj, trajectory_msgs::msg::JointTrajectory& sorted_trj);
 private:
   bool init_microint_;
   std::vector<std::string> joint_names_;
-  std::shared_ptr<rclcpp_action::ServerGoalHandle<FollowJTrajAction>> goal_handle_;
 
 
 };

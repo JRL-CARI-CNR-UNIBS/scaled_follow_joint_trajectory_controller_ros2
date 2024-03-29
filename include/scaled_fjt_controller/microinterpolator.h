@@ -9,7 +9,6 @@ class Microinterpolator
 protected:
 
   trajectory_msgs::msg::JointTrajectory trj_;
-  rclcpp::Node node = rclcpp::Node("microinterpolator");
 
   unsigned int order_;
   bool trj_set_;

@@ -13,15 +13,15 @@ void Microinterpolator::setSplineOrder(const unsigned int& order)
   if (order_<5)
     order_=order;
   else
-     RCLCPP_WARN_STREAM(node.get_logger(), "Interpolation order should be less or equal to 4");
+     RCLCPP_WARN_STREAM(rclcpp::get_logger("microinterpolator"), "Interpolation order should be less or equal to 4");
 }
 
 bool Microinterpolator::setTrajectory(const trajectory_msgs::msg::JointTrajectory& trj)
 {
   trj_=trj;
   trj_set_ = true;
-  RCLCPP_INFO_STREAM(node.get_logger(), "Trajectory set !");
-  RCLCPP_DEBUG_STREAM(node.get_logger(), "active goal: " << trajectory_msgs::msg::to_yaml( trj_ ));
+  RCLCPP_INFO_STREAM(rclcpp::get_logger("microinterpolator"), "Trajectory set !");
+  RCLCPP_DEBUG_STREAM(rclcpp::get_logger("microinterpolator"), "active goal: " << trajectory_msgs::msg::to_yaml( trj_ ));
 
   return trj_.points.size()>0;
 }
@@ -30,13 +30,13 @@ bool Microinterpolator::interpolate(const rclcpp::Duration& time, trajectory_msg
 {
   if (!trj_set_)
   {
-     RCLCPP_WARN_STREAM(node.get_logger(), "Trajectory is not set");
+     RCLCPP_WARN_STREAM(rclcpp::get_logger("microinterpolator"), "Trajectory is not set");
     return false;
   }
   
   if (trj_.points.size()==0)
   {
-     RCLCPP_WARN_STREAM(node.get_logger(), "Trajectory is empty");
+     RCLCPP_WARN_STREAM(rclcpp::get_logger("microinterpolator"), "Trajectory is empty");
     return false;
   }
 
@@ -44,7 +44,7 @@ bool Microinterpolator::interpolate(const rclcpp::Duration& time, trajectory_msg
   {
     pnt=trj_.points.at(0);
     pnt.effort.resize(trj_.points.at(0).positions.size(),0);
-     RCLCPP_WARN_STREAM(node.get_logger(), "Negative time, time="<<time.seconds());
+     RCLCPP_WARN_STREAM(rclcpp::get_logger("microinterpolator"), "Negative time, time="<<time.seconds());
     return false;
   }
   
