@@ -86,8 +86,6 @@ controller_interface::CallbackReturn ScaledFjtController::on_activate(const rclc
 {
   auto ret = JointTrajectoryController::on_activate(state);
 
-  speed_ovr_ = 1.0;
-
   std::vector<std::string> speed_ovr_topics;
   if (!get_node()->has_parameter("speed_ovr_topics"))
   {
@@ -110,18 +108,17 @@ controller_interface::CallbackReturn ScaledFjtController::on_activate(const rclc
   }
   
   for(const std::string& topic: speed_ovr_topic)
-  {
-  //auto cb=boost::bind(&cnr::control::ScaledFJTController<H,T>::overrideCallback,this,_1,override_name);
-    
+  {   
     speed_ovr_sub_.push_back(get_node()->create_subscription<std_msgs::msg::Int16>(
         topic,10,
         std::bind(&ScaledFjtController::SpeedOvrCb,
                   this,
                   std::placeholders::_1,
                   topic)));
+    speed_ovr_map_.insert(std::pair<std::string,double>(topic,1.0));
     RCLCPP_INFO_STREAM(this->get_logger(),"Subscribing speed override topic: "<<topic);
   }
-
+  speed_ovr_ = 1.0;
 
   action_server_ = rclcpp_action::create_server<FollowJTrajAction>(
         get_node()->get_node_base_interface(), get_node()->get_node_clock_interface(),
