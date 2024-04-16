@@ -84,17 +84,16 @@ controller_interface::InterfaceConfiguration ScaledFjtController::state_interfac
 
 controller_interface::CallbackReturn ScaledFjtController::on_activate(const rclcpp_lifecycle::State& state)
 {
-
   auto ret = JointTrajectoryController::on_activate(state);
 
-  speed_ovr_ = 1.0;
-  // TODO: from param
-
-  std::string speed_ovr_topic ;
-  if (!get_node()->has_parameter("speed_ovr_topic"))
-    speed_ovr_topic = "/speed_ovr";
+  std::vector<std::string> speed_ovr_topics;
+  if (!get_node()->has_parameter("speed_ovr_topics"))
+  {
+    speed_ovr_topic.push_back("/speed_ovr");
+    speed_ovr_topic.push_back("/safe_ovr");
+  }
   else
-    speed_ovr_topic = get_node()->get_parameter("speed_ovr_topic").as_string();
+    speed_ovr_topic = get_node()->get_parameter("speed_ovr_topic").as_string_array();
 
   int spline_order ;
   if (!get_node()->has_parameter("splide_order"))
@@ -107,13 +106,19 @@ controller_interface::CallbackReturn ScaledFjtController::on_activate(const rclc
     RCLCPP_ERROR(this->get_node()->get_logger(),"Spline order cannot be less than 1, set equal to 1");
     spline_order = 1;
   }
-
-  speed_ovr_sub_ = get_node()->create_subscription<std_msgs::msg::Int16>(
-        speed_ovr_topic,
-        10,
+  
+  for(const std::string& topic: speed_ovr_topic)
+  {   
+    speed_ovr_sub_.push_back(get_node()->create_subscription<std_msgs::msg::Int16>(
+        topic,10,
         std::bind(&ScaledFjtController::SpeedOvrCb,
                   this,
-                  std::placeholders::_1));
+                  std::placeholders::_1,
+                  topic)));
+    speed_ovr_map_.insert(std::pair<std::string,double>(topic,1.0));
+    RCLCPP_INFO_STREAM(this->get_logger(),"Subscribing speed override topic: "<<topic);
+  }
+  speed_ovr_ = 1.0;
 
   action_server_ = rclcpp_action::create_server<FollowJTrajAction>(
         get_node()->get_node_base_interface(), get_node()->get_node_clock_interface(),
@@ -162,6 +167,7 @@ controller_interface::CallbackReturn ScaledFjtController::on_activate(const rclc
 
 controller_interface::return_type ScaledFjtController::update(const rclcpp::Time& time, const rclcpp::Duration& period)
 {
+  std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
   if( !microinterpolator_->interpolate(td_.scaled_time,current_point_,speed_ovr_) )
   {
     RCLCPP_ERROR_STREAM(get_node()->get_logger(),"something wrong in interpolation.");
@@ -188,6 +194,9 @@ controller_interface::return_type ScaledFjtController::update(const rclcpp::Time
 
   td_.scaled_time = rclcpp::Duration::from_seconds(td_.scaled_time.seconds() + period.seconds() * speed_ovr_);
   td_.time        = rclcpp::Duration::from_seconds(td_.time.seconds() + period.seconds());
+  
+  std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+  RCLCPP_DEBUG_STREAM(get_node()->get_logger(),"UPDATE time:  = " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << "[microseconds]" );
 
   return controller_interface::return_type::OK;
 }
@@ -202,9 +211,19 @@ rclcpp_action::GoalResponse ScaledFjtController::goal_received_callback(
 }
 
 rclcpp_action::CancelResponse ScaledFjtController::goal_cancelled_callback(
-    const std::shared_ptr<rclcpp_action::ServerGoalHandle<FollowJTrajAction>> goal_handle
-    )
-{return JointTrajectoryController::goal_cancelled_callback(goal_handle);}
+  const std::shared_ptr<rclcpp_action::ServerGoalHandle<FollowJTrajAction>> goal_handle
+)
+{
+  current_point_.time_from_start = rclcpp::Duration::from_seconds(0.0);
+  trajectory_msgs::msg::JointTrajectory trj;
+  trj.points.push_back(current_point_);
+
+  microinterpolator_->setTrajectory(trj);
+
+
+  auto ret = JointTrajectoryController::goal_cancelled_callback(goal_handle);
+  return ret;
+}
 
 void ScaledFjtController::goal_accepted_callback(std::shared_ptr<rclcpp_action::ServerGoalHandle<FollowJTrajAction>> goal_handle)
 {
@@ -227,9 +246,23 @@ void ScaledFjtController::goal_accepted_callback(std::shared_ptr<rclcpp_action::
   goal_handle_ = goal_handle; //in the last line, otherwise goal_handle_->succeed() may happen in update()
 }
 
-void ScaledFjtController::SpeedOvrCb(const std_msgs::msg::Int16 ovr)
+void ScaledFjtController::SpeedOvrCb(const std_msgs::msg::Int16 msg, const std::string& topic)
 {
-  speed_ovr_=ovr.data*0.01;
+  double ovr;
+  if (msg.data>100)
+    ovr=1.0;
+  else if (msg.data<0)
+    ovr=0.0;
+  else
+    ovr=msg.data*0.01;
+    
+  speed_ovr_map_.at(topic)=ovr;
+  
+  double global_override = 1.0;
+  for (const std::pair<std::string,double>& p: speed_ovr_map_)
+    global_override*=p.second;
+  speed_ovr_ = global_override;
+
   RCLCPP_DEBUG_STREAM(get_node()->get_logger(),"ovr = "  << ovr.data);
 }
 
