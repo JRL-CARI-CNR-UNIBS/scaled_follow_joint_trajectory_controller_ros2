@@ -5,7 +5,7 @@
 #include "joint_trajectory_controller/joint_trajectory_controller.hpp"
 #include "scaled_fjt_controller/microinterpolator.h"
 #include <std_msgs/msg/int16.hpp>
-#include <map.h>
+#include <map>
 
 namespace scaled_fjt_controller
 {
@@ -32,7 +32,7 @@ public:
   std::map<std::string,double> speed_ovr_map_;
   std::vector<rclcpp::Subscription<std_msgs::msg::Int16>::SharedPtr> speed_ovr_sub_;
 
-  void SpeedOvrCb(const std_msgs::msg::Int16 msg, const std::string& topic);
+  void SpeedOvrCb(const std_msgs::msg::Int16 msg, const std::string topic);
 
 protected:
   struct TimeData

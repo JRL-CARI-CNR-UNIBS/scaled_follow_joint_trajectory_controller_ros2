@@ -57,7 +57,18 @@ DESTINATION include/scaled_fjt_controller
 FILES_MATCHING PATTERN "*.h*"
 PATTERN ".svn" EXCLUDE)
 
-ament_export_targets(export_scaled_fjt_controller HAS_LIBRARY_TARGET)
-ament_export_include_directories(include)
-ament_export_dependencies(${THIS_PACKAGE_INCLUDE_DEPENDS})
+ament_export_include_directories(
+        include
+)
+
+ament_export_libraries(
+        ${PROJECT_NAME}
+)
+
+ament_export_dependencies(
+        hardware_interface
+        pluginlib
+        rclcpp
+)
+
 ament_package()
