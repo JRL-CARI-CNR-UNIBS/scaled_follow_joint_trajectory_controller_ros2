@@ -213,10 +213,10 @@ namespace scaled_fjt_controller
       )
   {
 //    Commented because moveit ask for cancel the action when the trajectory takes more than the estimated time to execute (it does not consider scaling)
-//    current_point_.time_from_start = rclcpp::Duration::from_seconds(0.0);
-//    trajectory_msgs::msg::JointTrajectory trj;
-//    trj.points.push_back(current_point_);
-//    microinterpolator_->setTrajectory(trj);
+    current_point_.time_from_start = rclcpp::Duration::from_seconds(0.0);
+    trajectory_msgs::msg::JointTrajectory trj;
+    trj.points.push_back(current_point_);
+    microinterpolator_->setTrajectory(trj);
 
 
     auto ret = JointTrajectoryController::goal_cancelled_callback(goal_handle);
