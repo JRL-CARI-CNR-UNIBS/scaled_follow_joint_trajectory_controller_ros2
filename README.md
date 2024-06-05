@@ -56,6 +56,13 @@ ros2 topic pub /speed_ovr std_msgs/msg/Int16 {"data: 10"}
 The {"data: 10"} value can take any integer in the range [0-100] and represents a percentage of the nominal velocity of the goal trajectory.
 
 An example of usage with Moveit! is available [here](https://github.com/paolofrance/ros2_fanuc_interface?tab=readme-ov-file#trajectory-execution-velocity-scaling).
+
+Note. Moveit! cancels the trajectory execution when it requires too much than expected (due to a strong scaling). To avoid this behavior, go to `moveit_controllers.yaml` file of your cell moveit package and write
+```
+trajectory_execution:
+  execution_duration_monitoring: false
+```
+See [this link](https://github.com/moveit/moveit2/issues/1848) for more info.
  
 ## TODO:
 1. At the current state, it only implements positions as command_interfaces. It would be nice to also allow other command_interfaces.
