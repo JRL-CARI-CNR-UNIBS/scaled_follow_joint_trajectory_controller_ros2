@@ -1,10 +1,11 @@
-
 #ifndef SCALED_FJT_CONTROLLER
 #define SCALED_FJT_CONTROLLER
 
 #include "joint_trajectory_controller/joint_trajectory_controller.hpp"
 #include "scaled_fjt_controller/microinterpolator.h"
 #include <std_msgs/msg/int16.hpp>
+#include "sensor_msgs/msg/joint_state.hpp"
+#include "std_msgs/msg/float64.hpp"
 #include <map>
 
 namespace scaled_fjt_controller
@@ -44,6 +45,11 @@ protected:
 
   ScaledFjtController::TimeData td_;
   std::shared_ptr<rclcpp_action::ServerGoalHandle<FollowJTrajAction>> goal_handle_;
+  std::mutex mtx_;
+
+  rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr scaled_time_pub_;
+  rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr execution_ratio_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr unscaled_joint_target_pub_;
 
   bool sort_trajectory(const std::vector<std::string>& joint_names, const trajectory_msgs::msg::JointTrajectory& trj, trajectory_msgs::msg::JointTrajectory& sorted_trj);
 private:

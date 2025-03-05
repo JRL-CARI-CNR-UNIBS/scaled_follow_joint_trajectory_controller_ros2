@@ -6,6 +6,8 @@
 #include "lifecycle_msgs/msg/state.hpp"
 #include "rclcpp_action/create_server.hpp"
 #include "rclcpp_action/server_goal_handle.hpp"
+#include "sensor_msgs/msg/joint_state.hpp"
+#include "std_msgs/msg/float64.hpp"
 
 namespace scaled_fjt_controller
 {
@@ -96,10 +98,10 @@ namespace scaled_fjt_controller
       speed_ovr_topics = get_node()->get_parameter("speed_ovr_topics").as_string_array();
 
     int spline_order ;
-    if (!get_node()->has_parameter("splide_order"))
+    if (!get_node()->has_parameter("spline_order"))
       spline_order = 1;
     else
-      spline_order = get_node()->get_parameter("splide_order").as_int();
+      spline_order = get_node()->get_parameter("spline_order").as_int();
 
     if(spline_order<1)
     {
@@ -160,6 +162,11 @@ namespace scaled_fjt_controller
 
     microinterpolator_->setSplineOrder(spline_order);
 
+    // add publishers unscaled, scaled time, execution ratio
+    scaled_time_pub_ = get_node()->create_publisher<std_msgs::msg::Float64>("scaled_time", 10);
+    execution_ratio_pub_ = get_node()->create_publisher<std_msgs::msg::Float64>("execution_ratio", 10);
+    unscaled_joint_target_pub_ = get_node()->create_publisher<sensor_msgs::msg::JointState>("unscaled_joint_target", 10);
+
     return ret;
   }
 
@@ -187,11 +194,50 @@ namespace scaled_fjt_controller
       goal_handle_ = nullptr;
     }
 
+    // send command to robot
     for (size_t i=0; i<current_point_.positions.size();i++)
       this->joint_command_interface_[0][i].get().set_value(current_point_.positions[i]);
 
+    //mtx_.lock();
     td_.scaled_time = rclcpp::Duration::from_seconds(td_.scaled_time.seconds() + period.seconds() * speed_ovr_);
     td_.time        = rclcpp::Duration::from_seconds(td_.time.seconds() + period.seconds());
+    //mtx_.unlock();
+
+    // publish scaled time
+    std::shared_ptr<std_msgs::msg::Float64> scaled_msg(new std_msgs::msg::Float64());
+    scaled_msg->data=td_.scaled_time.seconds();
+    scaled_time_pub_->publish(*scaled_msg);
+
+    // publish execution ratio
+    std::shared_ptr<std_msgs::msg::Float64> ratio_msg(new std_msgs::msg::Float64());
+    if (microinterpolator_->trjTime().seconds()>0)
+    {
+      ratio_msg->data=std::min(1.0,td_.scaled_time.seconds()/microinterpolator_->trjTime().seconds());
+    }
+    else
+    {
+      ratio_msg->data=1;
+    }
+    execution_ratio_pub_->publish(*ratio_msg);
+
+    // compute unscaled joint target
+    std::shared_ptr<sensor_msgs::msg::JointState> unscaled_js_msg(new sensor_msgs::msg::JointState());
+    trajectory_msgs::msg::JointTrajectoryPoint unscaled_pnt;
+    if( !microinterpolator_->interpolate(td_.scaled_time,unscaled_pnt,1) )
+    {
+      RCLCPP_ERROR_STREAM(get_node()->get_logger(),"something wrong in interpolation.");
+    }
+
+    // publish unscaled joint target
+    unscaled_js_msg->name = joint_names_;
+    unscaled_js_msg->position.resize(current_point_.positions.size());
+    unscaled_js_msg->velocity.resize(current_point_.positions.size());
+    unscaled_js_msg->effort.resize(current_point_.positions.size(),0);
+    unscaled_js_msg->position      = unscaled_pnt.positions;
+    unscaled_js_msg->velocity      = unscaled_pnt.velocities;
+    unscaled_js_msg->header.stamp  = get_node()->get_clock()->now();
+    unscaled_joint_target_pub_->publish(*unscaled_js_msg);
+
 
     std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
     RCLCPP_DEBUG_STREAM(get_node()->get_logger(),"UPDATE time:  = " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << "[microseconds]" );
