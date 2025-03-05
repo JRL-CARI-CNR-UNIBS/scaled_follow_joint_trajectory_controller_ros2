@@ -27,13 +27,14 @@ public:
 
   trajectory_msgs::msg::JointTrajectory trj_;
   std::shared_ptr<Microinterpolator> microinterpolator_;
-  trajectory_msgs::msg::JointTrajectoryPoint current_point_;  
+  trajectory_msgs::msg::JointTrajectoryPoint current_point_;
+  std::shared_ptr<sensor_msgs::msg::JointState> unscaled_js_msg_;
 
   double speed_ovr_;
   std::map<std::string,double> speed_ovr_map_;
   std::vector<rclcpp::Subscription<std_msgs::msg::Int16>::SharedPtr> speed_ovr_sub_;
 
-  void SpeedOvrCb(const std_msgs::msg::Int16 msg, const std::string topic);
+  void SpeedOvrCb(const std_msgs::msg::Int16 &msg, const std::string &topic);
 
 protected:
   struct TimeData
@@ -46,6 +47,7 @@ protected:
   ScaledFjtController::TimeData td_;
   std::shared_ptr<rclcpp_action::ServerGoalHandle<FollowJTrajAction>> goal_handle_;
   std::mutex mtx_;
+  std::mutex speed_ovr_mtx_;
 
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr scaled_time_pub_;
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr execution_ratio_pub_;
@@ -53,10 +55,9 @@ protected:
 
   bool sort_trajectory(const std::vector<std::string>& joint_names, const trajectory_msgs::msg::JointTrajectory& trj, trajectory_msgs::msg::JointTrajectory& sorted_trj);
 private:
-  bool init_microint_;
   std::vector<std::string> joint_names_;
 
-
+  std::string printCurrentPos();
 };
 }  
 
