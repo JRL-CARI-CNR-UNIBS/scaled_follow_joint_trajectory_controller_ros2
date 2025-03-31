@@ -157,6 +157,7 @@ controller_interface::CallbackReturn ScaledFjtController::on_activate(const rclc
   }
 
   RCLCPP_DEBUG_STREAM(get_node()->get_logger(),"starting point = \n"<< trajectory_msgs::msg::to_yaml(current_point_));
+  std::cerr<<"starting point = \n"<< trajectory_msgs::msg::to_yaml(current_point_)<<std::endl;
 
   unscaled_js_msg_ = std::make_shared<sensor_msgs::msg::JointState>();
   unscaled_js_msg_->name = joint_names_;
