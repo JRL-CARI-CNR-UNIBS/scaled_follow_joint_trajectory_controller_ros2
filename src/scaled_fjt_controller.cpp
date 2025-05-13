@@ -157,7 +157,6 @@ controller_interface::CallbackReturn ScaledFjtController::on_activate(const rclc
   }
 
   RCLCPP_DEBUG_STREAM(get_node()->get_logger(),"starting point = \n"<< trajectory_msgs::msg::to_yaml(current_point_));
-  std::cerr<<"starting point = \n"<< trajectory_msgs::msg::to_yaml(current_point_)<<std::endl;
 
   unscaled_js_msg_ = std::make_shared<sensor_msgs::msg::JointState>();
   unscaled_js_msg_->name = joint_names_;
@@ -217,9 +216,20 @@ controller_interface::return_type ScaledFjtController::update(const rclcpp::Time
   }
 
   // send command to robot
-  for (size_t i=0; i<current_point_.positions.size();i++)
+  if (has_position_command_interface_)
   {
-    this->joint_command_interface_[0][i].get().set_value(current_point_.positions[i]);
+    for (size_t i=0; i<current_point_.positions.size();i++)
+      this->joint_command_interface_[0][i].get().set_value(current_point_.positions[i]);
+  }
+  if (has_velocity_command_interface_)
+  {
+    for (size_t i=0; i<current_point_.positions.size();i++)
+      this->joint_command_interface_[1][i].get().set_value(current_point_.velocities[i]);
+  }
+  if (has_acceleration_command_interface_)
+  {
+    for (size_t i=0; i<current_point_.positions.size();i++)
+      this->joint_command_interface_[2][i].get().set_value(current_point_.accelerations[i]);
   }
 
   RCLCPP_DEBUG_STREAM(get_node()->get_logger(),printCurrentPos());
@@ -260,6 +270,10 @@ controller_interface::return_type ScaledFjtController::update(const rclcpp::Time
 
   std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
   RCLCPP_DEBUG_STREAM(get_node()->get_logger(),"UPDATE time:  = " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << "[microseconds]" );
+
+  state_desired_ = current_point_;
+  state_current_ = current_point_;
+  publish_state(state_desired_, state_current_, state_error_);
 
   return controller_interface::return_type::OK;
 }
