@@ -99,13 +99,42 @@ controller_interface::CallbackReturn ScaledFjtController::on_activate(const rclc
   auto ret = JointTrajectoryController::on_activate(state);
 
   std::vector<std::string> speed_ovr_topics;
-  if (!get_node()->has_parameter("speed_ovr_topics"))
+  if (!get_node()->has_parameter("speed_ovr_topics.topics"))
   {
     speed_ovr_topics.push_back("/speed_ovr");
     speed_ovr_topics.push_back("/safe_ovr");
   }
   else
-    speed_ovr_topics = get_node()->get_parameter("speed_ovr_topics").as_string_array();
+  {
+    speed_ovr_topics = get_node()->get_parameter("speed_ovr_topics.topics").as_string_array();
+  }
+
+  speed_ovr_topics_policy_ = SpeedOvrTopicPolicy::MULTIPLY;
+  if (get_node()->has_parameter("speed_ovr_topics.policy"))
+  {
+    std::string policy = get_node()->get_parameter("speed_ovr_topics.policy").as_string();
+    if (policy.compare("MULTIPLY")==0)
+    {
+      speed_ovr_topics_policy_ = SpeedOvrTopicPolicy::MULTIPLY;
+    }
+    else if (policy.compare("MINIMUM")==0)
+    {
+      speed_ovr_topics_policy_ = SpeedOvrTopicPolicy::MINIMUM;
+    }
+    else if (policy.compare("MAXIMUM")==0)
+    {
+      speed_ovr_topics_policy_ = SpeedOvrTopicPolicy::MAXIMUM;
+    }
+    else if (policy.compare("AVERAGE")==0)
+    {
+      speed_ovr_topics_policy_ = SpeedOvrTopicPolicy::AVERAGE;
+    }
+    else
+    {
+      RCLCPP_ERROR(get_node()->get_logger(),"Topic policy %s is unknown. Using MULTIPLY as default.", policy.c_str());
+    }
+  }
+
 
   int spline_order ;
   if (!get_node()->has_parameter("spline_order"))
@@ -339,8 +368,27 @@ void ScaledFjtController::SpeedOvrCb(const std_msgs::msg::Int16& msg, const std:
   speed_ovr_map_.at(topic)=ovr;
 
   double global_override = 1.0;
-  for (const std::pair<std::string,double> p: speed_ovr_map_)
-    global_override*=p.second;
+
+  switch (speed_ovr_topics_policy_)
+  {
+  case MULTIPLY:
+    for (const std::pair<std::string,double> p: speed_ovr_map_)
+      global_override*=p.second;
+    break;
+  case MINIMUM:
+    for (const std::pair<std::string,double> p: speed_ovr_map_)
+      global_override=std::min(global_override, p.second);
+    break;
+  case MAXIMUM:
+    for (const std::pair<std::string,double> p: speed_ovr_map_)
+      global_override=std::max(global_override, p.second);
+    break;
+  case AVERAGE:
+    for (const std::pair<std::string,double> p: speed_ovr_map_)
+      global_override+=p.second;
+    global_override/=speed_ovr_map_.size();
+    break;
+  }
 
   speed_ovr_mtx_.lock();
   speed_ovr_ = global_override;

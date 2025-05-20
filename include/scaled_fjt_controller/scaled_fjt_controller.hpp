@@ -8,6 +8,14 @@
 #include "std_msgs/msg/float64.hpp"
 #include <map>
 
+enum SpeedOvrTopicPolicy
+{
+  MINIMUM,
+  MULTIPLY,
+  MAXIMUM,
+  AVERAGE
+};
+
 namespace scaled_fjt_controller
 {
 class ScaledFjtController : public joint_trajectory_controller::JointTrajectoryController
@@ -33,6 +41,7 @@ public:
   double speed_ovr_;
   std::map<std::string,double> speed_ovr_map_;
   std::vector<rclcpp::Subscription<std_msgs::msg::Int16>::SharedPtr> speed_ovr_sub_;
+  SpeedOvrTopicPolicy speed_ovr_topics_policy_;
 
   void SpeedOvrCb(const std_msgs::msg::Int16 &msg, const std::string &topic);
 
