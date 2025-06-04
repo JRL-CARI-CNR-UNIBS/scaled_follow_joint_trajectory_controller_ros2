@@ -23,14 +23,19 @@ set(THIS_PACKAGE_INCLUDE_DEPENDS
   rclcpp_lifecycle  
 )
 
-include_directories(include)
+# include_directories(include)
 
 add_library(${PROJECT_NAME} SHARED
   src/scaled_fjt_controller.cpp
   src/microinterpolator.cpp
 )
-target_include_directories(${PROJECT_NAME} PRIVATE
-  include
+
+target_link_libraries(${PROJECT_NAME} PUBLIC)
+
+target_include_directories(${PROJECT_NAME}
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
 )
 
 pluginlib_export_plugin_description_file(controller_interface scaled_fjt_controller.xml)
@@ -42,7 +47,7 @@ ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 
 install(
   DIRECTORY include/
-  DESTINATION include/scaled_fjt_controller
+  DESTINATION include
 )
 install(
   TARGETS ${PROJECT_NAME}

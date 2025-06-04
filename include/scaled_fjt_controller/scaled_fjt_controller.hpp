@@ -25,6 +25,7 @@ public:
   ~ScaledFjtController() override = default;
 
   controller_interface::InterfaceConfiguration state_interface_configuration() const override;
+  controller_interface::CallbackReturn on_configure(const rclcpp_lifecycle::State & state) override;
   controller_interface::CallbackReturn on_activate(const rclcpp_lifecycle::State& state) override;
   controller_interface::return_type update(const rclcpp::Time& time, const rclcpp::Duration& period) override;
   CallbackReturn on_init() override;
@@ -35,7 +36,7 @@ public:
 
   trajectory_msgs::msg::JointTrajectory trj_;
   std::shared_ptr<Microinterpolator> microinterpolator_;
-  trajectory_msgs::msg::JointTrajectoryPoint current_point_;
+  //trajectory_msgs::msg::JointTrajectoryPoint current_point_;
   std::shared_ptr<sensor_msgs::msg::JointState> unscaled_js_msg_;
 
   double speed_ovr_;
@@ -63,10 +64,18 @@ protected:
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr unscaled_joint_target_pub_;
 
   bool sort_trajectory(const std::vector<std::string>& joint_names, const trajectory_msgs::msg::JointTrajectory& trj, trajectory_msgs::msg::JointTrajectory& sorted_trj);
-private:
   std::vector<std::string> joint_names_;
-
   std::string printCurrentPos();
+
+  void update_commands();
+  double interpolate(const rclcpp::Duration &period);
+  void publish_unscaled_js_target();
+  bool check_tolerances(bool& tolerance_violated_while_moving, bool& outside_goal_tolerance, bool& within_goal_time);
+  void compute_error_for_joint(JointTrajectoryPoint & error, size_t index, const JointTrajectoryPoint & current, const JointTrajectoryPoint & desired);
+
+
+
+
 };
 }  
 
