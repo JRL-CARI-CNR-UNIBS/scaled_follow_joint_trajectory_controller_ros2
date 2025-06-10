@@ -273,7 +273,7 @@ controller_interface::return_type ScaledFjtController::update(const rclcpp::Time
 
   state_desired_ = current_point_;
   state_current_ = current_point_;
-  publish_state(state_desired_, state_current_, state_error_);
+  publish_state(time, state_desired_, state_current_, state_error_);
 
   return controller_interface::return_type::OK;
 }
