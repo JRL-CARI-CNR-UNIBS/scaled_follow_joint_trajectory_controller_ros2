@@ -20,13 +20,13 @@ bool Microinterpolator::setTrajectory(const trajectory_msgs::msg::JointTrajector
 {
   trj_=trj;
   trj_set_ = true;
-  RCLCPP_INFO_STREAM(rclcpp::get_logger("microinterpolator"), "Trajectory set !");
-  RCLCPP_DEBUG_STREAM(rclcpp::get_logger("microinterpolator"), "active goal: " << trajectory_msgs::msg::to_yaml( trj_ ));
+  RCLCPP_INFO_STREAM(rclcpp::get_logger("microinterpolator"), "****************************************************************** Trajectory set !");
+  //RCLCPP_INFO_STREAM(rclcpp::get_logger("microinterpolator"), "active goal: " << trajectory_msgs::msg::to_yaml( trj_ ));
 
   return trj_.points.size()>0;
 }
 
-bool Microinterpolator::interpolate(const rclcpp::Duration& time, trajectory_msgs::msg::JointTrajectoryPoint& pnt, const double& scaling)
+bool Microinterpolator::interpolate(const rclcpp::Duration& time, trajectory_msgs::msg::JointTrajectoryPoint& pnt, const double& scaling) const
 {
   if (!trj_set_)
   {
@@ -86,10 +86,10 @@ bool Microinterpolator::interpolate(const rclcpp::Duration& time, trajectory_msg
         }
         else if (order_==1)
         {
-          double& p0_1=trj_.points.at(iPnt-1).positions.at(iAx);
-          double& p0_2=trj_.points.at(iPnt-1).velocities.at(iAx);
-          double& pf_1=trj_.points.at(iPnt).positions.at(iAx);
-          double& pf_2=trj_.points.at(iPnt).velocities.at(iAx);
+          double p0_1=trj_.points.at(iPnt-1).positions.at(iAx);
+          double p0_2=trj_.points.at(iPnt-1).velocities.at(iAx);
+          double pf_1=trj_.points.at(iPnt).positions.at(iAx);
+          double pf_2=trj_.points.at(iPnt).velocities.at(iAx);
           
           double c1 = p0_1;
           double c2 = p0_2;
@@ -102,12 +102,12 @@ bool Microinterpolator::interpolate(const rclcpp::Duration& time, trajectory_msg
         }
         else if (order_==2)
         {
-          double& p0_1=trj_.points.at(iPnt-1).positions.at(iAx);
-          double& p0_2=trj_.points.at(iPnt-1).velocities.at(iAx);
-          double& p0_3=trj_.points.at(iPnt-1).accelerations.at(iAx);
-          double& pf_1=trj_.points.at(iPnt).positions.at(iAx);
-          double& pf_2=trj_.points.at(iPnt).velocities.at(iAx);
-          double& pf_3=trj_.points.at(iPnt).accelerations.at(iAx);
+          double p0_1=trj_.points.at(iPnt-1).positions.at(iAx);
+          double p0_2=trj_.points.at(iPnt-1).velocities.at(iAx);
+          double p0_3=trj_.points.at(iPnt-1).accelerations.at(iAx);
+          double pf_1=trj_.points.at(iPnt).positions.at(iAx);
+          double pf_2=trj_.points.at(iPnt).velocities.at(iAx);
+          double pf_3=trj_.points.at(iPnt).accelerations.at(iAx);
           
           double c1 = p0_1;
           double c2 = p0_2;
@@ -117,18 +117,18 @@ bool Microinterpolator::interpolate(const rclcpp::Duration& time, trajectory_msg
           double c6 = 1.0/(delta_time*delta_time*delta_time*delta_time*delta_time)*(p0_1*1.2E1-pf_1*1.2E1+delta_time*p0_2*6.0+delta_time*pf_2*6.0+(delta_time*delta_time)*p0_3-(delta_time*delta_time)*pf_3)*(-1.0/2.0);
           
           
-          pnt.positions.at(iAx)     = c1+c2*t+c3*(t*t)+c4*(t*t*t)+c5*(t*t*t*t)+c6*(t*t*t*t*t);
-          pnt.velocities.at(iAx)    = c2+c3*t*2.0+c4*(t*t)*3.0+c5*(t*t*t)*4.0+c6*(t*t*t*t)*5.0;
-          pnt.accelerations.at(iAx) = c3*2.0+c4*t*6.0+c5*(t*t)*1.2E1+c6*(t*t*t)*2.0E1;
+          pnt.positions.at(iAx)     = c1+c2*t+c3*(t*t)+c4*(t*t*t)  +c5*(t*t*t*t)  +c6*(t*t*t*t*t);
+          pnt.velocities.at(iAx)    =    c2+  c3*t*2.0+c4*(t*t)*3.0+c5*(t*t*t)*4.0+c6*(t*t*t*t)*5.0;
+          pnt.accelerations.at(iAx) =         c3*2.0  +c4*t*6.0    +c5*(t*t)*1.2E1+c6*(t*t*t)*2.0E1;
         }
         else if (order_==3)
         {
-          double& p0_1=trj_.points.at(iPnt-1).positions.at(iAx);
-          double& p0_2=trj_.points.at(iPnt-1).velocities.at(iAx);
-          double& p0_3=trj_.points.at(iPnt-1).accelerations.at(iAx);
-          double& pf_1=trj_.points.at(iPnt).positions.at(iAx);
-          double& pf_2=trj_.points.at(iPnt).velocities.at(iAx);
-          double& pf_3=trj_.points.at(iPnt).accelerations.at(iAx);
+          double p0_1=trj_.points.at(iPnt-1).positions.at(iAx);
+          double p0_2=trj_.points.at(iPnt-1).velocities.at(iAx);
+          double p0_3=trj_.points.at(iPnt-1).accelerations.at(iAx);
+          double pf_1=trj_.points.at(iPnt).positions.at(iAx);
+          double pf_2=trj_.points.at(iPnt).velocities.at(iAx);
+          double pf_3=trj_.points.at(iPnt).accelerations.at(iAx);
           // initial and final jerks set equal to zero
 
           double c1 = p0_1;
@@ -147,12 +147,12 @@ bool Microinterpolator::interpolate(const rclcpp::Duration& time, trajectory_msg
         }
         else if (order_==4)
         {
-          double& p0_1=trj_.points.at(iPnt-1).positions.at(iAx);
-          double& p0_2=trj_.points.at(iPnt-1).velocities.at(iAx);
-          double& p0_3=trj_.points.at(iPnt-1).accelerations.at(iAx);
-          double& pf_1=trj_.points.at(iPnt).positions.at(iAx);
-          double& pf_2=trj_.points.at(iPnt).velocities.at(iAx);
-          double& pf_3=trj_.points.at(iPnt).accelerations.at(iAx);
+          double p0_1=trj_.points.at(iPnt-1).positions.at(iAx);
+          double p0_2=trj_.points.at(iPnt-1).velocities.at(iAx);
+          double p0_3=trj_.points.at(iPnt-1).accelerations.at(iAx);
+          double pf_1=trj_.points.at(iPnt).positions.at(iAx);
+          double pf_2=trj_.points.at(iPnt).velocities.at(iAx);
+          double pf_3=trj_.points.at(iPnt).accelerations.at(iAx);
           // initial and final jerks and snaps set equal to zero
 
           double c1 = p0_1;

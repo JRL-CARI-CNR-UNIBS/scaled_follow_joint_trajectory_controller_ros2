@@ -24,7 +24,8 @@ public:
    * order = 4 snaps are continuous, supposed zero at the waypoints
    */
   void setSplineOrder(const unsigned int& order);
-  bool interpolate(const rclcpp::Duration& time, trajectory_msgs::msg::JointTrajectoryPoint& pnt, const double& scaling=1.0);
+  const unsigned int& getSplineOrder() const { return order_;}
+  bool interpolate(const rclcpp::Duration& time, trajectory_msgs::msg::JointTrajectoryPoint& pnt, const double& scaling=1.0) const;
   rclcpp::Duration trjTime();
 };
-  
+

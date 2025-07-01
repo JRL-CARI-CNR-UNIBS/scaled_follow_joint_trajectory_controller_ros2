@@ -1,3 +1,4 @@
+#include <rclcpp/logging.hpp>
 #include <scaled_fjt_controller/scaled_fjt_controller.hpp>
 
 #include <memory>
@@ -34,7 +35,7 @@ bool ScaledFjtController::sort_trajectory(const std::vector<std::string>& joint_
 
   for (unsigned int iOrder=0;iOrder<joint_names.size();iOrder++)
   {
-    RCLCPP_DEBUG(get_node()->get_logger(),"index %u, original trajectory %s, sorted trajectory %s",iOrder,names.at(iOrder).c_str(),joint_names.at(iOrder).c_str());
+    RCLCPP_INFO(get_node()->get_logger(),"index %u, original trajectory %s, sorted trajectory %s",iOrder,names.at(iOrder).c_str(),joint_names.at(iOrder).c_str());
     if (names.at(iOrder).compare(joint_names.at(iOrder)))
     {
       for (unsigned int iNames=0;iNames<names.size();iNames++)
@@ -42,7 +43,7 @@ bool ScaledFjtController::sort_trajectory(const std::vector<std::string>& joint_
         if (!joint_names.at(iOrder).compare(names.at(iNames)))
         {
           order_idx.at(iOrder)=iNames;
-          RCLCPP_DEBUG(get_node()->get_logger(),"Joint %s (index %u) of original trajectory will be in position %u",names.at(iNames).c_str(),iOrder,iNames);
+          RCLCPP_INFO(get_node()->get_logger(),"Joint %s (index %u) of original trajectory will be in position %u",names.at(iNames).c_str(),iOrder,iNames);
           break;
         }
         if (iNames==(names.size()-1))
@@ -55,7 +56,7 @@ bool ScaledFjtController::sort_trajectory(const std::vector<std::string>& joint_
     else
     {
       order_idx.at(iOrder)=iOrder;
-      RCLCPP_DEBUG(get_node()->get_logger(),"Joint %s (index %u) of original trajectory will be in position %u",names.at(iOrder).c_str(),iOrder,iOrder);
+      RCLCPP_INFO(get_node()->get_logger(),"Joint %s (index %u) of original trajectory will be in position %u",names.at(iOrder).c_str(),iOrder,iOrder);
     }
   }
 
@@ -82,7 +83,20 @@ bool ScaledFjtController::sort_trajectory(const std::vector<std::string>& joint_
 
 controller_interface::CallbackReturn ScaledFjtController::on_init()
 {
-  return JointTrajectoryController::on_init();
+  auto ret = joint_trajectory_controller::JointTrajectoryController::on_init();
+  if (ret != controller_interface::CallbackReturn::SUCCESS) {
+    return ret;
+  }
+
+  // Declare the custom parameter
+  get_node()->declare_parameter<int8_t>("spline_order", 1);
+  get_node()->declare_parameter< std::vector<std::string> >("speed_ovr_topics", {
+    "/speed_ovr",
+    "/safe_ovr"
+  });
+  
+
+  return controller_interface::CallbackReturn::SUCCESS;
 }
 
 
@@ -105,19 +119,31 @@ controller_interface::CallbackReturn ScaledFjtController::on_activate(const rclc
     speed_ovr_topics.push_back("/safe_ovr");
   }
   else
+  {
     speed_ovr_topics = get_node()->get_parameter("speed_ovr_topics").as_string_array();
+  }
 
   int spline_order ;
   if (!get_node()->has_parameter("spline_order"))
+  {
+    RCLCPP_ERROR(this->get_node()->get_logger(),"!!! Spline has not been set, setting spline order to 1");
     spline_order = 1;
+  }
   else
+  {
     spline_order = get_node()->get_parameter("spline_order").as_int();
+  }
 
   if(spline_order<1)
   {
     RCLCPP_ERROR(this->get_node()->get_logger(),"Spline order cannot be less than 1, set equal to 1");
     spline_order = 1;
   }
+  else
+  {
+    RCLCPP_WARN(this->get_node()->get_logger(),"Spline order is equal to %d", spline_order);
+  }
+
 
   for(const std::string& topic: speed_ovr_topics)
   {
@@ -144,19 +170,28 @@ controller_interface::CallbackReturn ScaledFjtController::on_activate(const rclc
   current_point_.effort.resize(this->dof_, 0);
   joint_names_.resize(this->dof_,"");
 
-  RCLCPP_DEBUG_STREAM(get_node()->get_logger(),"this->joint_state_interface_[0].size = "<< this->joint_state_interface_[0].size());
+  RCLCPP_INFO_STREAM(get_node()->get_logger(),"this->joint_state_interface_[0].size = "<< this->joint_state_interface_[0].size());
 
   std::string delimiter = "/position";
   for (size_t i=0; i<current_point_.positions.size();i++)
   {
-    double jpos = this->joint_state_interface_[0][i].get().get_value();
-    current_point_.positions[i] = jpos;
+    auto  _jpos = this->joint_state_interface_[0][i].get().get_optional();
+    if (_jpos)
+    { 
+      double jpos = _jpos.value();
+      current_point_.positions[i] = jpos;
 
-    joint_names_.at(i) = this->joint_state_interface_[0][i].get().get_name();
-    joint_names_.at(i) = joint_names_.at(i).substr(0, joint_names_[i].find(delimiter));
+      joint_names_.at(i) = this->joint_state_interface_[0][i].get().get_name();
+      joint_names_.at(i) = joint_names_.at(i).substr(0, joint_names_[i].find(delimiter));
+    }
+    else
+    {
+      RCLCPP_ERROR_STREAM(get_node()->get_logger(),"Joint state interface for joint "<<i<<" is not available.");
+      return controller_interface::CallbackReturn::ERROR;
+    }
   }
 
-  RCLCPP_DEBUG_STREAM(get_node()->get_logger(),"starting point = \n"<< trajectory_msgs::msg::to_yaml(current_point_));
+  RCLCPP_INFO_STREAM(get_node()->get_logger(),"starting point = \n"<< trajectory_msgs::msg::to_yaml(current_point_));
 
   unscaled_js_msg_ = std::make_shared<sensor_msgs::msg::JointState>();
   unscaled_js_msg_->name = joint_names_;
@@ -189,7 +224,7 @@ controller_interface::return_type ScaledFjtController::update(const rclcpp::Time
 {
   std::lock_guard<std::mutex> lock(mtx_); //protect when new goal arrives. Finish the loop and eventually update the goal
 
-  std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+  //std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
   speed_ovr_mtx_.lock();
   double speed_ovr = speed_ovr_;
   speed_ovr_mtx_.unlock();
@@ -202,10 +237,15 @@ controller_interface::return_type ScaledFjtController::update(const rclcpp::Time
     RCLCPP_ERROR_STREAM(get_node()->get_logger(),"current point   = "  << trajectory_msgs::msg::to_yaml(current_point_));
   }
 
-  RCLCPP_DEBUG_STREAM(get_node()->get_logger(),"current point   = "  << trajectory_msgs::msg::to_yaml(current_point_));
-  RCLCPP_DEBUG_STREAM(get_node()->get_logger(),"td_.scaled_time   = "  << td_.scaled_time.seconds());
-  RCLCPP_DEBUG_STREAM(get_node()->get_logger(),"td_.time   = "  << td_.time.seconds());
-  RCLCPP_DEBUG_STREAM(get_node()->get_logger(),"speed ovr  = "  << speed_ovr);
+  if(td_.scaled_time.seconds()<1e-6)
+  {
+    RCLCPP_INFO_STREAM(get_node()->get_logger(),"Spline order    = "  << microinterpolator_->getSplineOrder());
+    RCLCPP_INFO_STREAM(get_node()->get_logger(),"TRG FIRST point    = "  << trajectory_msgs::msg::to_yaml(trj_.points.front()));
+    RCLCPP_INFO_STREAM(get_node()->get_logger(),"CALC FIRST point   = "  << trajectory_msgs::msg::to_yaml(current_point_));
+    RCLCPP_INFO_STREAM(get_node()->get_logger(),"CALC FIRST td_.scaled_time   = "  << td_.scaled_time.seconds());
+    RCLCPP_INFO_STREAM(get_node()->get_logger(),"CALC FIRST td_.time   = "  << td_.time.seconds());
+    RCLCPP_INFO_STREAM(get_node()->get_logger(),"CALC FIRST speed ovr  = "  << speed_ovr);
+  }
 
   if(goal_handle_ && goal_handle_->is_executing() && (td_.scaled_time-trj_.points.back().time_from_start).seconds()>=0)
   {
@@ -219,20 +259,35 @@ controller_interface::return_type ScaledFjtController::update(const rclcpp::Time
   if (has_position_command_interface_)
   {
     for (size_t i=0; i<current_point_.positions.size();i++)
-      this->joint_command_interface_[0][i].get().set_value(current_point_.positions[i]);
+    {
+      if (!this->joint_command_interface_[0][i].get().set_value(current_point_.positions[i]))
+      {
+        RCLCPP_ERROR_STREAM(get_node()->get_logger(),"Failed to set position command for joint: " << this->joint_command_interface_[0][i].get().get_name());
+      }
+    }
   }
   if (has_velocity_command_interface_)
   {
     for (size_t i=0; i<current_point_.positions.size();i++)
-      this->joint_command_interface_[1][i].get().set_value(current_point_.velocities[i]);
+    {
+      if(!this->joint_command_interface_[1][i].get().set_value(current_point_.velocities[i]))
+      {
+        RCLCPP_ERROR_STREAM(get_node()->get_logger(),"Failed to set velocity command for joint: " << this->joint_command_interface_[0][i].get().get_name());
+      }
+    }
   }
   if (has_acceleration_command_interface_)
   {
     for (size_t i=0; i<current_point_.positions.size();i++)
-      this->joint_command_interface_[2][i].get().set_value(current_point_.accelerations[i]);
+    {
+      if(!this->joint_command_interface_[2][i].get().set_value(current_point_.velocities[i]))
+      {
+        RCLCPP_ERROR_STREAM(get_node()->get_logger(),"Failed to set velocity command for joint: " << this->joint_command_interface_[0][i].get().get_name());
+      }
+    }
   }
 
-  RCLCPP_DEBUG_STREAM(get_node()->get_logger(),printCurrentPos());
+  //RCLCPP_INFO_STREAM(get_node()->get_logger(),printCurrentPos());
 
   td_.scaled_time = rclcpp::Duration::from_seconds(td_.scaled_time.seconds() + period.seconds() * speed_ovr);
   td_.time        = rclcpp::Duration::from_seconds(td_.time.seconds() + period.seconds());
@@ -268,8 +323,8 @@ controller_interface::return_type ScaledFjtController::update(const rclcpp::Time
   unscaled_js_msg_->header.stamp  = get_node()->get_clock()->now();
   unscaled_joint_target_pub_->publish(*unscaled_js_msg_);
 
-  std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
-  RCLCPP_DEBUG_STREAM(get_node()->get_logger(),"UPDATE time:  = " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << "[microseconds]" );
+  //std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+  //RCLCPP_INFO_STREAM(get_node()->get_logger(),"UPDATE time:  = " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << "[microseconds]" );
 
   state_desired_ = current_point_;
   state_current_ = current_point_;
@@ -305,9 +360,9 @@ rclcpp_action::CancelResponse ScaledFjtController::goal_cancelled_callback(
 
 void ScaledFjtController::goal_accepted_callback(std::shared_ptr<rclcpp_action::ServerGoalHandle<FollowJTrajAction>> goal_handle)
 {
-  JointTrajectoryController::goal_accepted_callback(goal_handle);
-
   std::lock_guard<std::mutex> lock(mtx_);
+
+  JointTrajectoryController::goal_accepted_callback(goal_handle);
 
   if (!this->sort_trajectory(joint_names_, goal_handle->get_goal()->trajectory, trj_))
   {
@@ -346,7 +401,7 @@ void ScaledFjtController::SpeedOvrCb(const std_msgs::msg::Int16& msg, const std:
   speed_ovr_ = global_override;
   speed_ovr_mtx_.unlock();
 
-  RCLCPP_DEBUG_STREAM(get_node()->get_logger(),"ovr = "  << msg.data<<" global ovr = "<<global_override);
+  RCLCPP_INFO_STREAM(get_node()->get_logger(),"ovr = "  << msg.data<<" global ovr = "<<global_override);
 }
 } 
 
