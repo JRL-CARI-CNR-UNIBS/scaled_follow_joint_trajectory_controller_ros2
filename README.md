@@ -44,6 +44,11 @@ manipulator_controller:
     open_loop_control: true
     constraints:
       goal_time: 0.0
+    speed_ovr_topics:
+      topics: ["speed_ovr"]
+      policy: "MINIMUM" 
+    state_publish_rate: 100.0
+    action_monitor_rate: 20.0
 
 ```
 
@@ -57,15 +62,37 @@ The {"data: 10"} value can take any integer in the range [0-100] and represents 
 
 An example of usage with Moveit! is available [here](https://github.com/paolofrance/ros2_fanuc_interface?tab=readme-ov-file#trajectory-execution-velocity-scaling).
 
-Note. Moveit! cancels the trajectory execution when it requires too much than expected (due to a strong scaling). To avoid this behavior, go to `moveit_controllers.yaml` file of your cell moveit package and write
+
+### Options
+
+The speed scaling value is read from a list of topics:
+```
+    speed_ovr_topics:
+      topics: ["speed_ovr"]
+      policy: "MINIMUM" 
+```
+
+- ```topics``` is the list of topics the controller will listen to. The expected topic type is ```std_msgs/msg/Int16``` with scaling values between 0 and 100.
+
+- ```policy``` is the method to compute the overall scaling value when ```topics``` contains more than one element. Available policies are:
+  - ```MULTIPLY```: computes the product of the scaling values read from each topic
+  - ```MINIMUM```: computes the minimum of the scaling values read from each topic
+  - ```MAXIMUM```: computes the maximum of the scaling values read from each topic
+  - ```AVERAGE```: computes the average of the scaling values read from each topic
+
+**Default:** 
+
+- speed_ovr_topics.topics = ["speed_ovr","safe_ovr"]
+- speed_ovr_topics.policy = "MULTIPLY"
+
+
+### Troubleshooting
+- Moveit! cancels the trajectory execution when it requires too much than expected (due to a strong scaling). To avoid this behavior, go to `moveit_controllers.yaml` file of your cell moveit package and write
 ```
 trajectory_execution:
   execution_duration_monitoring: false
 ```
 See [this link](https://github.com/moveit/moveit2/issues/1848) for more info.
- 
-## TODO:
-1. At the current state, it only implements positions as command_interfaces. It would be nice to also allow other command_interfaces.
 
 
 

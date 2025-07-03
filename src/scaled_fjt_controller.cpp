@@ -9,6 +9,8 @@
 #include "rclcpp_action/server_goal_handle.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "std_msgs/msg/float64.hpp"
+#include "angles/angles.h"
+
 
 namespace scaled_fjt_controller
 {
@@ -16,11 +18,163 @@ namespace scaled_fjt_controller
 std::string ScaledFjtController::printCurrentPos()
 {
   std::string p = "time: "+std::to_string(td_.scaled_time.seconds())+ " pos: ";
-  for (size_t i=0; i<current_point_.positions.size();i++)
+  for (size_t i=0; i<state_desired_.positions.size();i++)
   {
-    p = p+std::to_string(current_point_.positions[i])+" ";
+    p = p+std::to_string(state_desired_.positions[i])+" ";
   }
   return p;
+}
+
+bool ScaledFjtController::check_tolerances(bool& tolerance_violated_while_moving,
+                                           bool& outside_goal_tolerance,
+                                           bool& within_goal_time)
+{
+  auto active_tol = active_tolerances_.readFromRT();
+  tolerance_violated_while_moving = false;
+  outside_goal_tolerance = false;
+  within_goal_time = true;
+
+  // Check state/goal tolerance
+  for (size_t index = 0; index < dof_; ++index)
+  {
+    compute_error_for_joint(state_error_, index, state_current_, state_desired_);
+
+    // Check points are within path tolerance
+    if (td_.scaled_time < microinterpolator_->trjTime() &&
+        !check_state_tolerance_per_joint(
+        state_error_, index, active_tol->state_tolerance[index], true /* show_errors */))
+    {
+      tolerance_violated_while_moving = true;
+    }
+    // past the final point, check that we end up inside goal tolerance
+    if (td_.scaled_time >= microinterpolator_->trjTime() &&
+        !check_state_tolerance_per_joint(
+          state_error_, index, active_tol->goal_state_tolerance[index], false /* show_errors */))
+    {
+      outside_goal_tolerance = true;
+
+      if (active_tol->goal_time_tolerance != 0.0)
+      {
+        if ( (td_.scaled_time - microinterpolator_->trjTime()).seconds() > active_tol->goal_time_tolerance)
+        {
+          within_goal_time = false;
+        }
+      }
+    }
+  }
+
+  return outside_goal_tolerance || tolerance_violated_while_moving;
+}
+
+void ScaledFjtController::compute_error_for_joint(JointTrajectoryPoint & error,
+                                                  size_t index,
+                                                  const JointTrajectoryPoint & current,
+                                                  const JointTrajectoryPoint & desired)
+{
+  // error defined as the difference between current and desired
+  if (joints_angle_wraparound_[index])
+  {
+    // if desired, the shortest_angular_distance is calculated, i.e., the error is
+    //  normalized between -pi<error<pi
+    error.positions[index] =
+      angles::shortest_angular_distance(current.positions[index], desired.positions[index]);
+  }
+  else
+  {
+    error.positions[index] = desired.positions[index] - current.positions[index];
+  }
+  if (
+    has_velocity_state_interface_ &&
+    (has_velocity_command_interface_ || has_effort_command_interface_))
+  {
+    error.velocities[index] = desired.velocities[index] - current.velocities[index];
+  }
+  if (has_acceleration_state_interface_ && has_acceleration_command_interface_)
+  {
+    error.accelerations[index] = desired.accelerations[index] - current.accelerations[index];
+  }
+};
+
+void ScaledFjtController::update_commands()
+{
+  // send command to robot
+  if (has_position_command_interface_)
+  {
+    for (size_t i=0; i<state_desired_.positions.size();i++)
+      this->joint_command_interface_[0][i].get().set_value(state_desired_.positions[i]);
+  }
+  if (has_velocity_command_interface_)
+  {
+    for (size_t i=0; i<state_desired_.positions.size();i++)
+      this->joint_command_interface_[1][i].get().set_value(state_desired_.velocities[i]);
+  }
+  if (has_acceleration_command_interface_)
+  {
+    for (size_t i=0; i<state_desired_.positions.size();i++)
+      this->joint_command_interface_[2][i].get().set_value(state_desired_.accelerations[i]);
+  }
+}
+
+double ScaledFjtController::interpolate(const rclcpp::Duration& period)
+{
+  std::lock_guard<std::mutex> lock(mtx_); //protect when new goal arrives. Finish the loop and eventually update the goal
+
+  speed_ovr_mtx_.lock();
+  double speed_ovr = speed_ovr_;
+  speed_ovr_mtx_.unlock();
+
+  if( !microinterpolator_->interpolate(td_.scaled_time,state_desired_,speed_ovr) )
+  {
+    RCLCPP_ERROR_STREAM(get_node()->get_logger(),"something wrong in interpolation.");
+    RCLCPP_ERROR_STREAM(get_node()->get_logger(),"scaled time     = "  << td_.scaled_time.seconds());
+    RCLCPP_ERROR_STREAM(get_node()->get_logger(),"global override = "  << speed_ovr);
+    RCLCPP_ERROR_STREAM(get_node()->get_logger(),"current point   = "  << trajectory_msgs::msg::to_yaml(state_desired_));
+  }
+
+  RCLCPP_DEBUG_STREAM(get_node()->get_logger(),"current point   = "  << trajectory_msgs::msg::to_yaml(state_desired_));
+  RCLCPP_DEBUG_STREAM(get_node()->get_logger(),"td_.scaled_time   = "  << td_.scaled_time.seconds());
+  RCLCPP_DEBUG_STREAM(get_node()->get_logger(),"td_.time   = "  << td_.time.seconds());
+  RCLCPP_DEBUG_STREAM(get_node()->get_logger(),"speed ovr  = "  << speed_ovr);
+
+
+  td_.scaled_time = rclcpp::Duration::from_seconds(td_.scaled_time.seconds() + period.seconds() * speed_ovr);
+  td_.time        = rclcpp::Duration::from_seconds(td_.time.seconds() + period.seconds());
+
+  return speed_ovr;
+}
+
+void ScaledFjtController::publish_unscaled_js_target()
+{
+  // publish scaled time
+  std::shared_ptr<std_msgs::msg::Float64> scaled_msg(new std_msgs::msg::Float64());
+  scaled_msg->data=td_.scaled_time.seconds();
+  scaled_time_pub_->publish(*scaled_msg);
+
+  // publish execution ratio
+  std::shared_ptr<std_msgs::msg::Float64> ratio_msg(new std_msgs::msg::Float64());
+  if (microinterpolator_->trjTime().seconds()>0)
+  {
+    ratio_msg->data=std::min(1.0,td_.scaled_time.seconds()/microinterpolator_->trjTime().seconds());
+  }
+  else
+  {
+    ratio_msg->data=1;
+  }
+  execution_ratio_pub_->publish(*ratio_msg);
+
+  // compute unscaled joint target
+  trajectory_msgs::msg::JointTrajectoryPoint unscaled_pnt;
+  if( !microinterpolator_->interpolate(td_.scaled_time,unscaled_pnt,1) )
+  {
+    RCLCPP_ERROR_STREAM(get_node()->get_logger(),"something wrong in interpolation.");
+  }
+
+  // publish unscaled joint target
+  unscaled_js_msg_->position      = unscaled_pnt.positions;
+  unscaled_js_msg_->velocity      = unscaled_pnt.velocities;
+  unscaled_js_msg_->effort        = unscaled_pnt.effort;
+  unscaled_js_msg_->header.stamp  = get_node()->get_clock()->now();
+  unscaled_joint_target_pub_->publish(*unscaled_js_msg_);
 }
 
 bool ScaledFjtController::sort_trajectory(const std::vector<std::string>& joint_names, const trajectory_msgs::msg::JointTrajectory& trj, trajectory_msgs::msg::JointTrajectory& sorted_trj)
@@ -108,20 +262,52 @@ controller_interface::InterfaceConfiguration ScaledFjtController::state_interfac
   return conf;
 }
 
+controller_interface::CallbackReturn ScaledFjtController::on_configure(const rclcpp_lifecycle::State & state)
+{
+  return JointTrajectoryController::on_configure(state);
+}
+
 controller_interface::CallbackReturn ScaledFjtController::on_activate(const rclcpp_lifecycle::State& state)
 {
   auto ret = JointTrajectoryController::on_activate(state);
 
   std::vector<std::string> speed_ovr_topics;
-  if (!get_node()->has_parameter("speed_ovr_topics"))
+  if (!get_node()->has_parameter("speed_ovr_topics.topics"))
   {
     speed_ovr_topics.push_back("/speed_ovr");
     speed_ovr_topics.push_back("/safe_ovr");
   }
   else
   {
-    speed_ovr_topics = get_node()->get_parameter("speed_ovr_topics").as_string_array();
+    speed_ovr_topics = get_node()->get_parameter("speed_ovr_topics.topics").as_string_array();
   }
+
+  speed_ovr_topics_policy_ = SpeedOvrTopicPolicy::MULTIPLY;
+  if (get_node()->has_parameter("speed_ovr_topics.policy"))
+  {
+    std::string policy = get_node()->get_parameter("speed_ovr_topics.policy").as_string();
+    if (policy.compare("MULTIPLY")==0)
+    {
+      speed_ovr_topics_policy_ = SpeedOvrTopicPolicy::MULTIPLY;
+    }
+    else if (policy.compare("MINIMUM")==0)
+    {
+      speed_ovr_topics_policy_ = SpeedOvrTopicPolicy::MINIMUM;
+    }
+    else if (policy.compare("MAXIMUM")==0)
+    {
+      speed_ovr_topics_policy_ = SpeedOvrTopicPolicy::MAXIMUM;
+    }
+    else if (policy.compare("AVERAGE")==0)
+    {
+      speed_ovr_topics_policy_ = SpeedOvrTopicPolicy::AVERAGE;
+    }
+    else
+    {
+      RCLCPP_ERROR(get_node()->get_logger(),"Topic policy %s is unknown. Using MULTIPLY as default.", policy.c_str());
+    }
+  }
+
 
   int spline_order ;
   if (!get_node()->has_parameter("spline_order"))
@@ -163,23 +349,23 @@ controller_interface::CallbackReturn ScaledFjtController::on_activate(const rclc
         std::bind(&ScaledFjtController::goal_cancelled_callback, this, std::placeholders::_1),
         std::bind(&ScaledFjtController::goal_accepted_callback, this, std::placeholders::_1));
 
-  current_point_.time_from_start = rclcpp::Duration::from_seconds(0.0);
-  current_point_.positions.resize(this->dof_, 0);
-  current_point_.velocities.resize(this->dof_, 0);
-  current_point_.accelerations.resize(this->dof_, 0);
-  current_point_.effort.resize(this->dof_, 0);
+  state_desired_.time_from_start = rclcpp::Duration::from_seconds(0.0);
+  state_desired_.positions.resize(this->dof_, 0);
+  state_desired_.velocities.resize(this->dof_, 0);
+  state_desired_.accelerations.resize(this->dof_, 0);
+  state_desired_.effort.resize(this->dof_, 0);
   joint_names_.resize(this->dof_,"");
 
   RCLCPP_INFO_STREAM(get_node()->get_logger(),"this->joint_state_interface_[0].size = "<< this->joint_state_interface_[0].size());
 
   std::string delimiter = "/position";
-  for (size_t i=0; i<current_point_.positions.size();i++)
+  for (size_t i=0; i<state_desired_.positions.size();i++)
   {
     auto  _jpos = this->joint_state_interface_[0][i].get().get_optional();
     if (_jpos)
     { 
       double jpos = _jpos.value();
-      current_point_.positions[i] = jpos;
+      state_desired_.positions[i] = jpos;
 
       joint_names_.at(i) = this->joint_state_interface_[0][i].get().get_name();
       joint_names_.at(i) = joint_names_.at(i).substr(0, joint_names_[i].find(delimiter));
@@ -191,18 +377,18 @@ controller_interface::CallbackReturn ScaledFjtController::on_activate(const rclc
     }
   }
 
-  RCLCPP_INFO_STREAM(get_node()->get_logger(),"starting point = \n"<< trajectory_msgs::msg::to_yaml(current_point_));
+  RCLCPP_DEBUG_STREAM(get_node()->get_logger(),"starting point = \n"<< trajectory_msgs::msg::to_yaml(state_desired_));
 
   unscaled_js_msg_ = std::make_shared<sensor_msgs::msg::JointState>();
   unscaled_js_msg_->name = joint_names_;
-  unscaled_js_msg_->effort = current_point_.effort;
-  unscaled_js_msg_->position = current_point_.positions;
-  unscaled_js_msg_->velocity = current_point_.velocities;
+  unscaled_js_msg_->effort = state_desired_.effort;
+  unscaled_js_msg_->position = state_desired_.positions;
+  unscaled_js_msg_->velocity = state_desired_.velocities;
   unscaled_js_msg_->header.stamp  = get_node()->get_clock()->now();
 
   trj_.joint_names = joint_names_;
   trj_.points.clear();
-  trj_.points.push_back(current_point_);
+  trj_.points.push_back(state_desired_);
 
   td_.scaled_time = rclcpp::Duration::from_seconds(0.0);
   td_.time        = rclcpp::Duration::from_seconds(0.0);
@@ -222,113 +408,47 @@ controller_interface::CallbackReturn ScaledFjtController::on_activate(const rclc
 
 controller_interface::return_type ScaledFjtController::update(const rclcpp::Time& time, const rclcpp::Duration& period)
 {
-  std::lock_guard<std::mutex> lock(mtx_); //protect when new goal arrives. Finish the loop and eventually update the goal
 
-  //std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
-  speed_ovr_mtx_.lock();
-  double speed_ovr = speed_ovr_;
-  speed_ovr_mtx_.unlock();
+  std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
 
-  if( !microinterpolator_->interpolate(td_.scaled_time,current_point_,speed_ovr) )
-  {
-    RCLCPP_ERROR_STREAM(get_node()->get_logger(),"something wrong in interpolation.");
-    RCLCPP_ERROR_STREAM(get_node()->get_logger(),"scaled time     = "  << td_.scaled_time.seconds());
-    RCLCPP_ERROR_STREAM(get_node()->get_logger(),"global override = "  << speed_ovr);
-    RCLCPP_ERROR_STREAM(get_node()->get_logger(),"current point   = "  << trajectory_msgs::msg::to_yaml(current_point_));
-  }
-
-  if(td_.scaled_time.seconds()<1e-6)
-  {
-    RCLCPP_INFO_STREAM(get_node()->get_logger(),"Spline order    = "  << microinterpolator_->getSplineOrder());
-    RCLCPP_INFO_STREAM(get_node()->get_logger(),"TRG FIRST point    = "  << trajectory_msgs::msg::to_yaml(trj_.points.front()));
-    RCLCPP_INFO_STREAM(get_node()->get_logger(),"CALC FIRST point   = "  << trajectory_msgs::msg::to_yaml(current_point_));
-    RCLCPP_INFO_STREAM(get_node()->get_logger(),"CALC FIRST td_.scaled_time   = "  << td_.scaled_time.seconds());
-    RCLCPP_INFO_STREAM(get_node()->get_logger(),"CALC FIRST td_.time   = "  << td_.time.seconds());
-    RCLCPP_INFO_STREAM(get_node()->get_logger(),"CALC FIRST speed ovr  = "  << speed_ovr);
-  }
+  interpolate(period);
 
   if(goal_handle_ && goal_handle_->is_executing() && (td_.scaled_time-trj_.points.back().time_from_start).seconds()>=0)
   {
-    auto result = std::make_shared<FollowJTrajAction::Result>();
-    result->error_code = result->SUCCESSFUL;
-    goal_handle_->succeed(result);
-    goal_handle_ = nullptr;
-  }
+    bool tolerance_violated_while_moving;
+    bool goal_tolerance_violated;
+    bool within_goal_time;
+    this->check_tolerances(tolerance_violated_while_moving, goal_tolerance_violated, within_goal_time);
 
-  // send command to robot
-  if (has_position_command_interface_)
-  {
-    for (size_t i=0; i<current_point_.positions.size();i++)
+    if (!goal_tolerance_violated)
     {
-      if (!this->joint_command_interface_[0][i].get().set_value(current_point_.positions[i]))
-      {
-        RCLCPP_ERROR_STREAM(get_node()->get_logger(),"Failed to set position command for joint: " << this->joint_command_interface_[0][i].get().get_name());
-      }
+      auto result = std::make_shared<FollowJTrajAction::Result>();
+      result->set__error_code(FollowJTrajAction::Result::SUCCESSFUL);
+      result->set__error_string("Goal successfully reached!");
+      goal_handle_->succeed(result);
+      goal_handle_ = nullptr;
     }
-  }
-  if (has_velocity_command_interface_)
-  {
-    for (size_t i=0; i<current_point_.positions.size();i++)
+    else if (!within_goal_time)
     {
-      if(!this->joint_command_interface_[1][i].get().set_value(current_point_.velocities[i]))
-      {
-        RCLCPP_ERROR_STREAM(get_node()->get_logger(),"Failed to set velocity command for joint: " << this->joint_command_interface_[0][i].get().get_name());
-      }
-    }
-  }
-  if (has_acceleration_command_interface_)
-  {
-    for (size_t i=0; i<current_point_.positions.size();i++)
-    {
-      if(!this->joint_command_interface_[2][i].get().set_value(current_point_.velocities[i]))
-      {
-        RCLCPP_ERROR_STREAM(get_node()->get_logger(),"Failed to set velocity command for joint: " << this->joint_command_interface_[0][i].get().get_name());
-      }
+      const std::string error_string = "Aborted due to goal_time_tolerance exceeding";
+      auto result = std::make_shared<FollowJTrajAction::Result>();
+      result->set__error_code(FollowJTrajAction::Result::GOAL_TOLERANCE_VIOLATED);
+      result->set__error_string(error_string);
+      goal_handle_->abort(result);
+      goal_handle_ = nullptr;
     }
   }
 
-  //RCLCPP_INFO_STREAM(get_node()->get_logger(),printCurrentPos());
+  update_commands();
 
-  td_.scaled_time = rclcpp::Duration::from_seconds(td_.scaled_time.seconds() + period.seconds() * speed_ovr);
-  td_.time        = rclcpp::Duration::from_seconds(td_.time.seconds() + period.seconds());
+  RCLCPP_DEBUG_STREAM(get_node()->get_logger(),printCurrentPos());
 
-  // publish scaled time
-  std::shared_ptr<std_msgs::msg::Float64> scaled_msg(new std_msgs::msg::Float64());
-  scaled_msg->data=td_.scaled_time.seconds();
-  scaled_time_pub_->publish(*scaled_msg);
+  publish_unscaled_js_target();
 
-  // publish execution ratio
-  std::shared_ptr<std_msgs::msg::Float64> ratio_msg(new std_msgs::msg::Float64());
-  if (microinterpolator_->trjTime().seconds()>0)
-  {
-    ratio_msg->data=std::min(1.0,td_.scaled_time.seconds()/microinterpolator_->trjTime().seconds());
-  }
-  else
-  {
-    ratio_msg->data=1;
-  }
-  execution_ratio_pub_->publish(*ratio_msg);
+  publish_state(state_desired_, state_current_, state_error_);
 
-  // compute unscaled joint target
-  trajectory_msgs::msg::JointTrajectoryPoint unscaled_pnt;
-  if( !microinterpolator_->interpolate(td_.scaled_time,unscaled_pnt,1) )
-  {
-    RCLCPP_ERROR_STREAM(get_node()->get_logger(),"something wrong in interpolation.");
-  }
-
-  // publish unscaled joint target
-  unscaled_js_msg_->position      = unscaled_pnt.positions;
-  unscaled_js_msg_->velocity      = unscaled_pnt.velocities;
-  unscaled_js_msg_->effort        = unscaled_pnt.effort;
-  unscaled_js_msg_->header.stamp  = get_node()->get_clock()->now();
-  unscaled_joint_target_pub_->publish(*unscaled_js_msg_);
-
-  //std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
-  //RCLCPP_INFO_STREAM(get_node()->get_logger(),"UPDATE time:  = " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << "[microseconds]" );
-
-  state_desired_ = current_point_;
-  state_current_ = current_point_;
-  publish_state(time, state_desired_, state_current_, state_error_);
+  std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+  RCLCPP_DEBUG_STREAM(get_node()->get_logger(),"UPDATE time:  = " << std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() << "[microseconds]" );
 
   return controller_interface::return_type::OK;
 }
@@ -349,9 +469,9 @@ rclcpp_action::CancelResponse ScaledFjtController::goal_cancelled_callback(
   std::lock_guard<std::mutex> lock(mtx_);
 
   // Keep the robot at the current position
-  current_point_.time_from_start = rclcpp::Duration::from_seconds(0.0);
+  state_desired_.time_from_start = rclcpp::Duration::from_seconds(0.0);
   trajectory_msgs::msg::JointTrajectory trj;
-  trj.points.push_back(current_point_);
+  trj.points.push_back(state_desired_);
   microinterpolator_->setTrajectory(trj);
 
   auto ret = JointTrajectoryController::goal_cancelled_callback(goal_handle);
@@ -394,8 +514,27 @@ void ScaledFjtController::SpeedOvrCb(const std_msgs::msg::Int16& msg, const std:
   speed_ovr_map_.at(topic)=ovr;
 
   double global_override = 1.0;
-  for (const std::pair<std::string,double> p: speed_ovr_map_)
-    global_override*=p.second;
+
+  switch (speed_ovr_topics_policy_)
+  {
+  case MULTIPLY:
+    for (const std::pair<std::string,double> p: speed_ovr_map_)
+      global_override*=p.second;
+    break;
+  case MINIMUM:
+    for (const std::pair<std::string,double> p: speed_ovr_map_)
+      global_override=std::min(global_override, p.second);
+    break;
+  case MAXIMUM:
+    for (const std::pair<std::string,double> p: speed_ovr_map_)
+      global_override=std::max(global_override, p.second);
+    break;
+  case AVERAGE:
+    for (const std::pair<std::string,double> p: speed_ovr_map_)
+      global_override+=p.second;
+    global_override/=speed_ovr_map_.size();
+    break;
+  }
 
   speed_ovr_mtx_.lock();
   speed_ovr_ = global_override;
