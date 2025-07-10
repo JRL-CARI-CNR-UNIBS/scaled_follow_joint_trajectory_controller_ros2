@@ -20,8 +20,8 @@ bool Microinterpolator::setTrajectory(const trajectory_msgs::msg::JointTrajector
 {
   trj_=trj;
   trj_set_ = true;
-  RCLCPP_INFO_STREAM(rclcpp::get_logger("microinterpolator"), "****************************************************************** Trajectory set !");
-  //RCLCPP_INFO_STREAM(rclcpp::get_logger("microinterpolator"), "active goal: " << trajectory_msgs::msg::to_yaml( trj_ ));
+  RCLCPP_INFO_STREAM(rclcpp::get_logger("microinterpolator"), "Trajectory set !");
+  RCLCPP_DEBUG_STREAM(rclcpp::get_logger("microinterpolator"), "active goal: " << trajectory_msgs::msg::to_yaml( trj_ ));
 
   return trj_.points.size()>0;
 }

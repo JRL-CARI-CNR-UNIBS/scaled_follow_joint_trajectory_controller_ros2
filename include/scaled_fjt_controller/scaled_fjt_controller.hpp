@@ -8,6 +8,13 @@
 #include "std_msgs/msg/float64.hpp"
 #include <map>
 
+namespace scaled_fjt_controller
+{
+
+constexpr char HW_IF_OFFSET_VELOCITY[] = "offset_velocity";
+constexpr char HW_IF_OFFSET_EFFORT[] = "offset_effort";
+constexpr char HW_IF_OFFSET_ACCELERATION[] = "offset_acceleration";
+
 enum SpeedOvrTopicPolicy
 {
   MINIMUM,
@@ -16,14 +23,13 @@ enum SpeedOvrTopicPolicy
   AVERAGE
 };
 
-namespace scaled_fjt_controller
-{
 class ScaledFjtController : public joint_trajectory_controller::JointTrajectoryController
 {
 public:
   ScaledFjtController() = default;
   ~ScaledFjtController() override = default;
 
+  controller_interface::InterfaceConfiguration command_interface_configuration() const override;
   controller_interface::InterfaceConfiguration state_interface_configuration() const override;
   controller_interface::CallbackReturn on_configure(const rclcpp_lifecycle::State & state) override;
   controller_interface::CallbackReturn on_activate(const rclcpp_lifecycle::State& state) override;
@@ -47,6 +53,7 @@ public:
   void SpeedOvrCb(const std_msgs::msg::Int16 &msg, const std::string &topic);
 
 protected:
+
   struct TimeData
   {
     TimeData() : time(rclcpp::Duration::from_seconds(0.0)),scaled_time(rclcpp::Duration::from_seconds(0.0)){}
@@ -65,16 +72,13 @@ protected:
 
   bool sort_trajectory(const std::vector<std::string>& joint_names, const trajectory_msgs::msg::JointTrajectory& trj, trajectory_msgs::msg::JointTrajectory& sorted_trj);
   std::vector<std::string> joint_names_;
+
   std::string printCurrentPos();
 
-  void update_commands();
+  bool update_commands();
   double interpolate(const rclcpp::Duration &period);
   void publish_unscaled_js_target();
   bool check_tolerances(bool& tolerance_violated_while_moving, bool& outside_goal_tolerance, bool& within_goal_time);
-  void compute_error_for_joint(JointTrajectoryPoint & error, size_t index, const JointTrajectoryPoint & current, const JointTrajectoryPoint & desired);
-
-
-
 
 };
 }  
