@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "scaled_fjt_controller/scaled_fjt_controller.hpp"
+#include "scaled_follow_joint_trajectory_controller_ros2/scaled_fjt_controller.hpp"
 
 #include <chrono>
 #include <functional>
