@@ -35,7 +35,7 @@ bool ScaledFjtController::sort_trajectory(const std::vector<std::string>& joint_
 
   for (unsigned int iOrder=0;iOrder<joint_names.size();iOrder++)
   {
-    RCLCPP_INFO(get_node()->get_logger(),"index %u, original trajectory %s, sorted trajectory %s",iOrder,names.at(iOrder).c_str(),joint_names.at(iOrder).c_str());
+    //RCLCPP_INFO(get_node()->get_logger(),"index %u, original trajectory %s, sorted trajectory %s",iOrder,names.at(iOrder).c_str(),joint_names.at(iOrder).c_str());
     if (names.at(iOrder).compare(joint_names.at(iOrder)))
     {
       for (unsigned int iNames=0;iNames<names.size();iNames++)
@@ -43,7 +43,7 @@ bool ScaledFjtController::sort_trajectory(const std::vector<std::string>& joint_
         if (!joint_names.at(iOrder).compare(names.at(iNames)))
         {
           order_idx.at(iOrder)=iNames;
-          RCLCPP_INFO(get_node()->get_logger(),"Joint %s (index %u) of original trajectory will be in position %u",names.at(iNames).c_str(),iOrder,iNames);
+          //RCLCPP_INFO(get_node()->get_logger(),"Joint %s (index %u) of original trajectory will be in position %u",names.at(iNames).c_str(),iOrder,iNames);
           break;
         }
         if (iNames==(names.size()-1))
@@ -56,7 +56,7 @@ bool ScaledFjtController::sort_trajectory(const std::vector<std::string>& joint_
     else
     {
       order_idx.at(iOrder)=iOrder;
-      RCLCPP_INFO(get_node()->get_logger(),"Joint %s (index %u) of original trajectory will be in position %u",names.at(iOrder).c_str(),iOrder,iOrder);
+      //RCLCPP_INFO(get_node()->get_logger(),"Joint %s (index %u) of original trajectory will be in position %u",names.at(iOrder).c_str(),iOrder,iOrder);
     }
   }
 
@@ -151,7 +151,7 @@ controller_interface::CallbackReturn ScaledFjtController::on_activate(const rclc
 
     speed_ovr_sub_.push_back(get_node()->create_subscription<std_msgs::msg::Int16>(topic,10,cb));
     speed_ovr_map_.insert(std::pair<std::string,double>(topic,1.0));
-    RCLCPP_INFO_STREAM(this->get_node()->get_logger(),"Subscribing speed override topic: "<<topic);
+    //RCLCPP_INFO_STREAM(this->get_node()->get_logger(),"Subscribing speed override topic: "<<topic);
   }
   speed_ovr_ = 1.0;
 
@@ -170,7 +170,7 @@ controller_interface::CallbackReturn ScaledFjtController::on_activate(const rclc
   current_point_.effort.resize(this->dof_, 0);
   joint_names_.resize(this->dof_,"");
 
-  RCLCPP_INFO_STREAM(get_node()->get_logger(),"this->joint_state_interface_[0].size = "<< this->joint_state_interface_[0].size());
+  //RCLCPP_INFO_STREAM(get_node()->get_logger(),"this->joint_state_interface_[0].size = "<< this->joint_state_interface_[0].size());
 
   std::string delimiter = "/position";
   for (size_t i=0; i<current_point_.positions.size();i++)
@@ -191,7 +191,7 @@ controller_interface::CallbackReturn ScaledFjtController::on_activate(const rclc
     }
   }
 
-  RCLCPP_INFO_STREAM(get_node()->get_logger(),"starting point = \n"<< trajectory_msgs::msg::to_yaml(current_point_));
+  //RCLCPP_INFO_STREAM(get_node()->get_logger(),"starting point = \n"<< trajectory_msgs::msg::to_yaml(current_point_));
 
   unscaled_js_msg_ = std::make_shared<sensor_msgs::msg::JointState>();
   unscaled_js_msg_->name = joint_names_;
@@ -235,16 +235,6 @@ controller_interface::return_type ScaledFjtController::update(const rclcpp::Time
     RCLCPP_ERROR_STREAM(get_node()->get_logger(),"scaled time     = "  << td_.scaled_time.seconds());
     RCLCPP_ERROR_STREAM(get_node()->get_logger(),"global override = "  << speed_ovr);
     RCLCPP_ERROR_STREAM(get_node()->get_logger(),"current point   = "  << trajectory_msgs::msg::to_yaml(current_point_));
-  }
-
-  if(td_.scaled_time.seconds()<1e-6)
-  {
-    RCLCPP_INFO_STREAM(get_node()->get_logger(),"Spline order    = "  << microinterpolator_->getSplineOrder());
-    RCLCPP_INFO_STREAM(get_node()->get_logger(),"TRG FIRST point    = "  << trajectory_msgs::msg::to_yaml(trj_.points.front()));
-    RCLCPP_INFO_STREAM(get_node()->get_logger(),"CALC FIRST point   = "  << trajectory_msgs::msg::to_yaml(current_point_));
-    RCLCPP_INFO_STREAM(get_node()->get_logger(),"CALC FIRST td_.scaled_time   = "  << td_.scaled_time.seconds());
-    RCLCPP_INFO_STREAM(get_node()->get_logger(),"CALC FIRST td_.time   = "  << td_.time.seconds());
-    RCLCPP_INFO_STREAM(get_node()->get_logger(),"CALC FIRST speed ovr  = "  << speed_ovr);
   }
 
   if(goal_handle_ && goal_handle_->is_executing() && (td_.scaled_time-trj_.points.back().time_from_start).seconds()>=0)
