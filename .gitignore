@@ -41,3 +41,6 @@
 build/
 install/
 log/
+
+# Generated documentation (doxygen Doxyfile)
+docs/api/
