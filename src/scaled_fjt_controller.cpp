@@ -4,6 +4,9 @@
 #include <scaled_fjt_controller/scaled_fjt_controller.hpp>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <string>
 #include <memory>
 #include <vector>
 
@@ -14,6 +17,28 @@
 
 namespace scaled_fjt_controller
 {
+
+namespace
+{
+using Clock = std::chrono::steady_clock;
+
+int64_t elapsedNs(Clock::time_point from, Clock::time_point to)
+{
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(to - from).count();
+}
+
+// Lock-free "a = max(a, v)" (single writer in practice, but the reader resets it concurrently).
+void storeMax(std::atomic<int64_t>& a, int64_t v)
+{
+  int64_t cur = a.load(std::memory_order_relaxed);
+  while (v > cur && !a.compare_exchange_weak(cur, v, std::memory_order_relaxed)) {}
+}
+
+std::string toMs(int64_t ns)
+{
+  return std::to_string(ns * 1.0e-6) + " ms";
+}
+}  // namespace
 
 std::string ScaledFjtController::printCurrentPos()
 {
@@ -152,6 +177,12 @@ controller_interface::CallbackReturn ScaledFjtController::on_configure(const rcl
   unscaled_joint_target_pub_ = std::make_unique<JointStatePublisher>(
         get_node()->create_publisher<sensor_msgs::msg::JointState>("unscaled_joint_target", 10));
 
+  // A cycle is "late" when the time since the previous one exceeds 1.5 nominal periods.
+  const unsigned int rate = get_update_rate();
+  late_threshold_ns_ = rate > 0 ? static_cast<int64_t>(1.5e9 / rate) : 0;
+  if (rate == 0)
+    RCLCPP_WARN(get_node()->get_logger(), "Update rate unknown: late cycles will not be counted");
+
   // Non-real-time timer that sends the action result when update() reports the end of the trajectory.
   goal_monitor_timer_ = get_node()->create_wall_timer(
         action_monitor_period_.to_chrono<std::chrono::nanoseconds>(), [this] { goalMonitorCallback(); });
@@ -189,13 +220,14 @@ controller_interface::CallbackReturn ScaledFjtController::on_activate(const rclc
     joint_names_.at(i) = joint_names_.at(i).substr(0, joint_names_[i].find(delimiter));
   }
 
-  trj_.joint_names = joint_names_;
-  trj_.points.clear();
-  trj_.points.push_back(current_point_);
+  trajectory_msgs::msg::JointTrajectory hold_trj;
+  hold_trj.joint_names = joint_names_;
+  hold_trj.points.push_back(current_point_);
 
   auto hold = std::make_shared<Microinterpolator>();
   hold->setSplineOrder(spline_order_);
-  hold->setTrajectory(trj_);
+  hold->setTrajectory(std::move(hold_trj));
+  last_update_start_ = Clock::time_point{};  // do not count the inactive time as a period
   {
     std::lock_guard<std::mutex> lock(mtx_);
     td_.scaled_time = rclcpp::Duration::from_seconds(0.0);
@@ -210,9 +242,19 @@ controller_interface::CallbackReturn ScaledFjtController::on_activate(const rclc
 controller_interface::return_type ScaledFjtController::update(const rclcpp::Time& time, const rclcpp::Duration& period)
 {
   // Real-time loop: no blocking logging and no blocking publishing here.
+  // Timing is taken before the lock, so the measured duration includes the wait for it.
+  const Clock::time_point begin = Clock::now();
+  if (last_update_start_ != Clock::time_point{})
+  {
+    const int64_t period_ns = elapsedNs(last_update_start_, begin);
+    storeMax(max_period_ns_, period_ns);
+    if (late_threshold_ns_ > 0 && period_ns > late_threshold_ns_)
+      late_cycles_.fetch_add(1, std::memory_order_relaxed);
+  }
+  last_update_start_ = begin;
+
   std::lock_guard<std::mutex> lock(mtx_); // goal callbacks hold it only to swap the interpolator
 
-  std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
   const double speed_ovr = speed_ovr_.load();
 
   // Checking the logger level costs a little: do it about once per second.
@@ -287,16 +329,6 @@ controller_interface::return_type ScaledFjtController::update(const rclcpp::Time
     unscaled_joint_target_pub_->unlockAndPublish();
   }
 
-  if (debug_enabled_)
-  {
-    std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
-    async_log_->push(AsyncLogger::Level::Debug,
-                     printCurrentPos() + " time: " + std::to_string(td_.time.seconds()) +
-                     " speed ovr: " + std::to_string(speed_ovr) + " UPDATE time: " +
-                     std::to_string(std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()) +
-                     " [microseconds]");
-  }
-
   state_desired_ = current_point_;
   state_current_ = current_point_;
 #if RCLCPP_VERSION_MAJOR >= 28  // Jazzy: publish_state() also takes the time
@@ -306,12 +338,53 @@ controller_interface::return_type ScaledFjtController::update(const rclcpp::Time
   publish_state(state_desired_, state_current_, state_error_);
 #endif
 
+  const int64_t update_ns = elapsedNs(begin, Clock::now());
+  storeMax(max_update_ns_, update_ns);
+
+  if (debug_enabled_)
+  {
+    async_log_->push(AsyncLogger::Level::Debug,
+                     printCurrentPos() + " time: " + std::to_string(td_.time.seconds()) +
+                     " speed ovr: " + std::to_string(speed_ovr) + " UPDATE time: " +
+                     std::to_string(update_ns / 1000) + " [microseconds]");
+  }
+
   return controller_interface::return_type::OK;
+}
+
+void ScaledFjtController::reportTiming()
+{
+  // Called with goal_mtx_ held (reads last_goal_time_).
+  const Clock::time_point now = Clock::now();
+  if (now - last_timing_report_ < std::chrono::seconds(1))
+    return;
+  last_timing_report_ = now;
+
+  const int64_t max_update = max_update_ns_.exchange(0);
+  const int64_t max_period = max_period_ns_.exchange(0);
+  const uint32_t late = late_cycles_.exchange(0);
+
+  // Warn on late cycles; report at Info for a few seconds after a goal arrives; Debug otherwise.
+  AsyncLogger::Level level = AsyncLogger::Level::Debug;
+  if (late > 0)
+    level = AsyncLogger::Level::Warn;
+  else if (last_goal_time_ != Clock::time_point{} && now - last_goal_time_ < std::chrono::seconds(3))
+    level = AsyncLogger::Level::Info;
+  if (level == AsyncLogger::Level::Debug && !async_log_->debugEnabled())
+    return;
+
+  std::string msg = "update() timing, last second: max duration " + toMs(max_update) +
+                    ", max period " + toMs(max_period);
+  if (late_threshold_ns_ > 0)
+    msg += " (nominal " + toMs(static_cast<int64_t>(late_threshold_ns_ / 1.5)) + "), late cycles: " +
+           std::to_string(late);
+  async_log_->push(level, msg);
 }
 
 void ScaledFjtController::goalMonitorCallback()
 {
   std::lock_guard<std::mutex> goal_lock(goal_mtx_);
+  reportTiming();
   if (!goal_handle_)
     return;
 
@@ -337,7 +410,9 @@ rclcpp_action::GoalResponse ScaledFjtController::goal_received_callback(
     , std::shared_ptr<const FollowJTrajAction::Goal> goal
     )
 {
+  const Clock::time_point t0 = Clock::now();
   auto ret = JointTrajectoryController::goal_received_callback(uuid,goal);
+  validation_ns_.store(elapsedNs(t0, Clock::now()));
   return ret;
 }
 
@@ -372,9 +447,12 @@ rclcpp_action::CancelResponse ScaledFjtController::goal_cancelled_callback(
 
 void ScaledFjtController::goal_accepted_callback(std::shared_ptr<rclcpp_action::ServerGoalHandle<FollowJTrajAction>> goal_handle)
 {
+  const Clock::time_point t_start = Clock::now();
   JointTrajectoryController::goal_accepted_callback(goal_handle);
+  const Clock::time_point t_base = Clock::now();
 
   std::lock_guard<std::mutex> goal_lock(goal_mtx_);
+  last_goal_time_ = t_start;
 
   // Everything proportional to the trajectory length is done here, without holding mtx_, so the
   // real-time update() loop keeps running while a long trajectory is being prepared.
@@ -389,29 +467,46 @@ void ScaledFjtController::goal_accepted_callback(std::shared_ptr<rclcpp_action::
     return;
   }
 
+  const Clock::time_point t_sort = Clock::now();
+
+  const size_t n_points = sorted_trj.points.size();
   auto new_interpolator = std::make_shared<Microinterpolator>();
   new_interpolator->setSplineOrder(spline_order_);
-  new_interpolator->setTrajectory(sorted_trj);
+  new_interpolator->setTrajectory(std::move(sorted_trj));
+  const Clock::time_point t_load = Clock::now();
 
-  async_log_->push(AsyncLogger::Level::Info,
-                   "Trajectory set: " + std::to_string(sorted_trj.points.size()) + " points, duration " +
-                   std::to_string(new_interpolator->trjTime().seconds()) + " s");
   if (async_log_->debugEnabled())
     async_log_->push(AsyncLogger::Level::Debug, "active goal " + new_interpolator->summary(3, 3));
+  const double duration = new_interpolator->trjTime().seconds();
 
   const uint64_t id = ++goal_counter_;
   std::shared_ptr<Microinterpolator> old_interpolator;  // destroyed after mtx_ is released
+  Clock::time_point t_lock_acquired;
+  const Clock::time_point t_before_lock = Clock::now();
   {
     std::lock_guard<std::mutex> lock(mtx_);
+    t_lock_acquired = Clock::now();
     old_interpolator = std::move(microinterpolator_);
     microinterpolator_ = std::move(new_interpolator);
     td_.scaled_time = rclcpp::Duration::from_seconds(0.0);
     td_.time        = rclcpp::Duration::from_seconds(0.0);
     active_goal_id_ = id;
   }
+  const Clock::time_point t_swap = Clock::now();
+  old_interpolator.reset();  // frees the previous trajectory, timed separately
+  const Clock::time_point t_free = Clock::now();
   goal_handle_ = goal_handle;
   goal_id_ = id;
-  trj_ = std::move(sorted_trj);
+
+  async_log_->push(AsyncLogger::Level::Info,
+                   "Trajectory set: " + std::to_string(n_points) + " points, duration " +
+                   std::to_string(duration) + " s. Preparation: validation " + toMs(validation_ns_.load()) +
+                   ", base class " + toMs(elapsedNs(t_start, t_base)) +
+                   ", sort " + toMs(elapsedNs(t_base, t_sort)) +
+                   ", load " + toMs(elapsedNs(t_sort, t_load)) +
+                   ", lock wait " + toMs(elapsedNs(t_before_lock, t_lock_acquired)) +
+                   ", swap " + toMs(elapsedNs(t_lock_acquired, t_swap)) +
+                   ", free old " + toMs(elapsedNs(t_swap, t_free)));
 }
 
 void ScaledFjtController::SpeedOvrCb(const std_msgs::msg::Int16& msg, const std::string& topic)

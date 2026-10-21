@@ -118,7 +118,6 @@ public:
    */
   void SpeedOvrCb(const std_msgs::msg::Int16& msg, const std::string& topic);
 
-  trajectory_msgs::msg::JointTrajectory trj_;              ///< Last accepted trajectory, in controller joint order.
   std::shared_ptr<Microinterpolator> microinterpolator_;   ///< Interpolator used by update().
   trajectory_msgs::msg::JointTrajectoryPoint current_point_;  ///< Last commanded point.
 
@@ -148,6 +147,9 @@ protected:
   /// @brief Non-real-time timer callback: sends the result of the goal that update() flagged as finished.
   void goalMonitorCallback();
 
+  /// @brief Logs, about once per second, the worst update() duration and period measured by update().
+  void reportTiming();
+
   ScaledFjtController::TimeData td_;  ///< Trajectory time. Protected by #mtx_.
 
   /// Shared with update(). Goal callbacks hold it only to swap pointers (a few microseconds).
@@ -170,6 +172,16 @@ protected:
   bool debug_enabled_{false};       ///< Cached "DEBUG level enabled", refreshed about once per second.
   unsigned int debug_check_counter_{0};
   std::chrono::steady_clock::time_point last_interpolation_error_{};  ///< Throttles interpolation errors.
+
+  // update() timing. Written by update(), read and reset by reportTiming().
+  std::chrono::steady_clock::time_point last_update_start_{};  ///< Start of the previous update(), zero if none.
+  std::atomic<int64_t> max_update_ns_{0};   ///< Longest update() since the last report, lock wait included.
+  std::atomic<int64_t> max_period_ns_{0};   ///< Longest time between two update() starts since the last report.
+  std::atomic<uint32_t> late_cycles_{0};    ///< Periods longer than #late_threshold_ns_ since the last report.
+  std::atomic<int64_t> validation_ns_{0};   ///< Duration of the last goal_received_callback().
+  int64_t late_threshold_ns_{0};            ///< 1.5 nominal periods, 0 if the update rate is unknown.
+  std::chrono::steady_clock::time_point last_timing_report_{};  ///< Used by reportTiming().
+  std::chrono::steady_clock::time_point last_goal_time_{};      ///< Last accepted goal. Protected by #goal_mtx_.
 
   std::unique_ptr<Float64Publisher> scaled_time_pub_;        ///< Topic `scaled_time`.
   std::unique_ptr<Float64Publisher> execution_ratio_pub_;    ///< Topic `execution_ratio`.
