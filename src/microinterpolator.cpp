@@ -72,6 +72,8 @@ std::string Microinterpolator::summary(size_t n_head, size_t n_tail) const
     if (i==n_head && n>n_head+n_tail)
     {
       ss << "\n  ... (" << n-n_head-n_tail << " points omitted)";
+      if (n_tail == 0)
+        break;
       i=n-n_tail;
     }
     printPoint(ss, i, trj_.points[i]);
