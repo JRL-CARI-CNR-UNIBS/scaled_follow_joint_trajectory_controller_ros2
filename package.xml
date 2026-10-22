@@ -3,9 +3,9 @@
 <package format="3">
   <name>scaled_follow_joint_trajectory_controller_ros2</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>FollowJointTrajectory controller (ros2_control) whose execution speed can be scaled at runtime through speed override topics.</description>
   <maintainer email="paolo.franceschi@supsi.ch">user</maintainer>
-  <license>TODO: License declaration</license>
+  <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   <depend>joint_trajectory_controller</depend>
@@ -14,7 +14,15 @@
   <depend>pluginlib                  </depend>
   <depend>rclcpp                     </depend>
   <depend>rclcpp_lifecycle           </depend>
+  <depend>rclcpp_action              </depend>
+  <depend>realtime_tools             </depend>
+  <depend>control_msgs               </depend>
+  <depend>trajectory_msgs            </depend>
+  <depend>sensor_msgs                </depend>
+  <depend>std_msgs                   </depend>
   <depend>moveit_msgs                </depend>
+
+  <doc_depend>doxygen</doc_depend>
 
 
 

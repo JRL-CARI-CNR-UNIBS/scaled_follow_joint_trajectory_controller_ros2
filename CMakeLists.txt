@@ -12,6 +12,12 @@ find_package(hardware_interface           REQUIRED)
 find_package(pluginlib                    REQUIRED)
 find_package(rclcpp                       REQUIRED)
 find_package(rclcpp_lifecycle             REQUIRED)
+find_package(rclcpp_action                REQUIRED)
+find_package(realtime_tools               REQUIRED)
+find_package(control_msgs                 REQUIRED)
+find_package(trajectory_msgs              REQUIRED)
+find_package(sensor_msgs                  REQUIRED)
+find_package(std_msgs                     REQUIRED)
 
 
 set(THIS_PACKAGE_INCLUDE_DEPENDS
@@ -21,6 +27,12 @@ set(THIS_PACKAGE_INCLUDE_DEPENDS
   pluginlib            
   rclcpp            
   rclcpp_lifecycle  
+  rclcpp_action
+  realtime_tools
+  control_msgs
+  trajectory_msgs
+  sensor_msgs
+  std_msgs
 )
 
 include_directories(include)
@@ -66,9 +78,7 @@ ament_export_libraries(
 )
 
 ament_export_dependencies(
-        hardware_interface
-        pluginlib
-        rclcpp
+        ${THIS_PACKAGE_INCLUDE_DEPENDS}
 )
 
 ament_package()
